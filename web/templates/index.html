@@ -429,6 +429,12 @@
                     <div style="margin-top: 1rem; padding-top: 0.5rem; border-top: 1px solid var(--border-color);">
                         <div
                             style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+                            <label style="margin:0; font-weight:600; font-size: 0.8rem; color: var(--accent-green);">🤖
+                                Auto Trading</label>
+                            <input type="checkbox" id="cfg-auto-trading" checked>
+                        </div>
+                        <div
+                            style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
                             <label style="margin:0; font-weight:600; font-size: 0.8rem; color: var(--accent-purple);">🧠
                                 Kelly Sizing</label>
                             <input type="checkbox" id="cfg-kelly-enable">
@@ -766,6 +772,9 @@
             document.getElementById('cfg-duration').value = data.max_duration_hours;
             document.getElementById('cfg-capital').value = data.capital_per_trade;
 
+            // Auto Trading
+            document.getElementById('cfg-auto-trading').checked = data.auto_trading_enabled !== false;
+
             // Kelly Settings
             document.getElementById('cfg-kelly-enable').checked = data.enable_kelly_sizing || false;
             document.getElementById('cfg-kelly-min').value = data.kelly_min_bet || 5.0;
@@ -779,6 +788,9 @@
                 max_duration_hours: parseInt(document.getElementById('cfg-duration').value),
                 capital_per_trade: parseFloat(document.getElementById('cfg-capital').value),
                 max_open_positions: 5,
+
+                // Auto Trading
+                auto_trading_enabled: document.getElementById('cfg-auto-trading').checked,
 
                 // Kelly Settings
                 enable_kelly_sizing: document.getElementById('cfg-kelly-enable').checked,

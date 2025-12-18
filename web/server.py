@@ -128,6 +128,7 @@ class ConfigUpdate(BaseModel):
     enable_kelly_sizing: bool = False
     kelly_min_bet: float = 5.0
     kelly_max_bet: float = 50.0
+    auto_trading_enabled: bool = True  # Trading automatique
 
 
 class TradeRequest(BaseModel):
@@ -260,6 +261,7 @@ async def get_config():
         "kelly_min_bet": settings.kelly_min_bet,
         "kelly_max_bet": settings.kelly_max_bet,
         "assets": settings.target_keywords,
+        "auto_trading_enabled": params.auto_trading_enabled,
     }
 
 
@@ -274,7 +276,8 @@ async def update_config(config: ConfigUpdate):
     params.max_duration_hours = max(1, min(720, config.max_duration_hours))
     params.capital_per_trade = max(0, min(10000, config.capital_per_trade))
     params.max_open_positions = max(0, min(50, config.max_open_positions))
-    
+    params.auto_trading_enabled = config.auto_trading_enabled
+
     # Update Kelly Settings
     settings = get_settings()
     settings.enable_kelly_sizing = config.enable_kelly_sizing

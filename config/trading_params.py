@@ -65,7 +65,7 @@ class TradingParams:
     # ═══════════════════════════════════════════════════════════════
     # CONTRÔLES
     # ═══════════════════════════════════════════════════════════════
-    auto_trading_enabled: bool = False  # Trading automatique désactivé (manuel)
+    auto_trading_enabled: bool = True  # Trading automatique activé
     require_confirmation: bool = True   # Confirmation avant trade
     
     def to_dict(self) -> dict:
