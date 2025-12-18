@@ -163,6 +163,7 @@ class OrderExecutor:
             True si démarré, False si erreur
         """
         if not self._credentials or not self._credentials.is_valid:
+            print("❌ [Executor] Credentials invalides ou manquantes")
             return False
 
         try:
@@ -198,6 +199,7 @@ class OrderExecutor:
             self._set_state(ExecutorState.READY)
             return True
         except Exception as e:
+            print(f"❌ [Executor] Erreur démarrage: {e}")
             self._set_state(ExecutorState.STOPPED)
             return False
     
