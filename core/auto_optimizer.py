@@ -369,6 +369,8 @@ class AutoOptimizer:
 
     # _optimize_order_size removed (Capital controlled by User/Kelly)
     # _optimize_max_position removed (Capital controlled by User)
+
+    def _optimize_first_buy_threshold(self, conditions: MarketConditions) -> float:
         """
         Optimise first_buy_threshold selon le spread et la volatilité.
 
