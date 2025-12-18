@@ -1,0 +1,944 @@
+<!DOCTYPE html>
+<html lang="fr">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🚀 HFT Scalper Bot - Polymarket</title>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;700&display=swap"
+        rel="stylesheet">
+    <style>
+        :root {
+            --bg-primary: #0d1117;
+            --bg-secondary: #161b22;
+            --bg-tertiary: #21262d;
+            --border-color: #30363d;
+            --text-primary: #c9d1d9;
+            --text-secondary: #8b949e;
+            --accent-blue: #58a6ff;
+            --accent-green: #3fb950;
+            --accent-red: #f85149;
+            --accent-yellow: #d29922;
+            --accent-purple: #a371f7;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+        }
+
+        .mono {
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        /* Header */
+        .header {
+            background: linear-gradient(135deg, var(--bg-secondary) 0%, var(--bg-tertiary) 100%);
+            border-bottom: 1px solid var(--border-color);
+            padding: 0.75rem 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .logo h1 {
+            font-size: 1.25rem;
+            font-weight: 700;
+            background: linear-gradient(90deg, var(--accent-blue), var(--accent-purple));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .status-bar {
+            display: flex;
+            gap: 1.5rem;
+            align-items: center;
+            font-size: 0.85rem;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--accent-red);
+            margin-right: 0.5rem;
+            display: inline-block;
+        }
+
+        .status-dot.active {
+            background: var(--accent-green);
+            box-shadow: 0 0 10px var(--accent-green);
+        }
+
+        /* Binance Ticker */
+        .ticker-wrap {
+            width: 100%;
+            background: var(--bg-tertiary);
+            border-bottom: 1px solid var(--border-color);
+            overflow: hidden;
+            height: 30px;
+            display: flex;
+            align-items: center;
+        }
+
+        .ticker {
+            display: inline-block;
+            white-space: nowrap;
+            padding-left: 100%;
+            animation: ticker 30s linear infinite;
+        }
+
+        .ticker-item {
+            display: inline-block;
+            padding: 0 1.5rem;
+            font-size: 0.8rem;
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        @keyframes ticker {
+            0% {
+                transform: translate3d(0, 0, 0);
+            }
+
+            100% {
+                transform: translate3d(-100%, 0, 0);
+            }
+        }
+
+        /* Layout */
+        .main-container {
+            display: grid;
+            grid-template-columns: 320px 1fr;
+            grid-template-rows: auto 1fr;
+            gap: 1rem;
+            padding: 1rem;
+            height: calc(100vh - 80px);
+        }
+
+        .panel {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .panel-header {
+            background: var(--bg-tertiary);
+            padding: 0.75rem 1rem;
+            border-bottom: 1px solid var(--border-color);
+            font-weight: 600;
+            font-size: 0.9rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .panel-content {
+            padding: 1rem;
+            overflow-y: auto;
+            flex: 1;
+        }
+
+        /* Stats Grid */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 0.75rem;
+        }
+
+        .stat-card {
+            background: var(--bg-primary);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            padding: 0.75rem;
+            text-align: center;
+        }
+
+        .stat-label {
+            font-size: 0.7rem;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            margin-bottom: 0.25rem;
+        }
+
+        .stat-value {
+            font-size: 1.1rem;
+            font-weight: 700;
+            color: var(--accent-blue);
+        }
+
+        /* Inputs */
+        .config-group {
+            margin-bottom: 0.75rem;
+        }
+
+        .config-group label {
+            display: block;
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            margin-bottom: 0.25rem;
+        }
+
+        .config-group input {
+            width: 100%;
+            padding: 0.5rem;
+            background: var(--bg-primary);
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            color: var(--text-primary);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.9rem;
+        }
+
+        .config-group input:focus {
+            border-color: var(--accent-blue);
+            outline: none;
+        }
+
+        /* Buttons */
+        .btn {
+            padding: 0.5rem 1rem;
+            border: none;
+            border-radius: 4px;
+            font-weight: 600;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.85rem;
+            transition: opacity 0.2s;
+        }
+
+        .btn:hover {
+            opacity: 0.9;
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .btn-primary {
+            background: var(--accent-blue);
+            color: white;
+        }
+
+        .btn-success {
+            background: var(--accent-green);
+            color: white;
+        }
+
+        .btn-danger {
+            background: var(--accent-red);
+            color: white;
+        }
+
+        .btn-sm {
+            padding: 0.25rem 0.5rem;
+            font-size: 0.75rem;
+        }
+
+        /* Tables */
+        .table-container {
+            overflow: auto;
+            height: 100%;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.85rem;
+        }
+
+        th {
+            background: var(--bg-tertiary);
+            padding: 0.75rem;
+            text-align: left;
+            position: sticky;
+            top: 0;
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            color: var(--text-secondary);
+            z-index: 10;
+        }
+
+        td {
+            padding: 0.75rem;
+            border-bottom: 1px solid var(--border-color);
+            vertical-align: middle;
+        }
+
+        tr:hover {
+            background: var(--bg-tertiary);
+        }
+
+        .market-col {
+            max-width: 250px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .value-col {
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .profit-pos {
+            color: var(--accent-green);
+        }
+
+        .profit-neg {
+            color: var(--accent-red);
+        }
+
+        .trade-btn {
+            background: transparent;
+            border: 1px solid var(--border-color);
+            color: var(--text-primary);
+            cursor: pointer;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            transition: all 0.2s;
+        }
+
+        .trade-btn:hover {
+            background: var(--bg-tertiary);
+            border-color: var(--text-primary);
+        }
+
+        .trade-btn.yes:hover {
+            border-color: var(--accent-green);
+            color: var(--accent-green);
+        }
+
+        .trade-btn.no:hover {
+            border-color: var(--accent-red);
+            color: var(--accent-red);
+        }
+
+        .active-trades-panel {
+            grid-column: 2;
+            grid-row: 1;
+            height: 250px;
+        }
+
+        .opportunities-panel {
+            grid-column: 2;
+            grid-row: 2;
+        }
+
+        .log-panel {
+            height: 150px;
+            font-size: 0.75rem;
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .log-entry {
+            margin-bottom: 2px;
+        }
+    </style>
+</head>
+
+<body>
+    <header class="header">
+        <div class="logo">
+            <span>🚀</span>
+            <h1>HFT SCALPER</h1>
+        </div>
+        <div class="status-bar">
+            <div><span class="status-dot" id="status-dot"></span><span id="status-text">Arrêté</span></div>
+            <div>📊 <span id="markets-count">0</span> Mkts</div>
+            <div>⏱️ <span id="uptime">00:00:00</span></div>
+        </div>
+    </header>
+
+    <div class="ticker-wrap">
+        <div class="ticker" id="binance-ticker">
+            <!-- Ticker items will be injected here -->
+            <span class="ticker-item">Chargement Binance Market Data...</span>
+        </div>
+    </div>
+
+    <div class="main-container">
+        <!-- Sidebar -->
+        <div class="sidebar">
+            <!-- Stats -->
+            <div class="panel" style="margin-bottom: 1rem;">
+                <div class="panel-header">📊 Performance Jour</div>
+                <div class="panel-content">
+                    <div class="stats-grid">
+                        <div class="stat-card">
+                            <div class="stat-label">P&L</div>
+                            <div class="stat-value" id="stat-pnl">$0.00</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-label">Win Rate</div>
+                            <div class="stat-value" id="stat-winrate">0%</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-label">Trades</div>
+                            <div class="stat-value" id="stat-trades">0</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-label">Open</div>
+                            <div class="stat-value" id="stat-positions">0/5</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Config -->
+            <div class="panel" style="margin-bottom: 1rem;">
+                <div class="panel-header">⚙️ Paramètres HFT</div>
+                <div class="panel-content">
+                    <div class="config-group">
+                        <label>Spread Min ($)</label>
+                        <input type="number" id="cfg-spread" step="0.01" value="0.06">
+                    </div>
+                    <div class="config-group">
+                        <label>Volume Min ($)</label>
+                        <input type="number" id="cfg-volume" step="1000" value="20000">
+                    </div>
+                    <div class="config-group">
+                        <label>Durée Max (h)</label>
+                        <input type="number" id="cfg-duration" step="1" value="24">
+                    </div>
+                    <div class="config-group">
+                        <label>Taille Trade ($)</label>
+                        <input type="number" id="cfg-capital" step="10" value="50">
+                    </div>
+
+                    <div style="margin-top: 1rem; padding-top: 0.5rem; border-top: 1px solid var(--border-color);">
+                        <div
+                            style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+                            <label style="margin:0; font-weight:600; font-size: 0.8rem; color: var(--accent-purple);">🧠
+                                Kelly Sizing</label>
+                            <input type="checkbox" id="cfg-kelly-enable">
+                        </div>
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem;">
+                            <div class="config-group">
+                                <label>Min ($)</label>
+                                <input type="number" id="cfg-kelly-min" step="1" value="5">
+                            </div>
+                            <div class="config-group">
+                                <label>Max ($)</label>
+                                <input type="number" id="cfg-kelly-max" step="5" value="50">
+                            </div>
+                        </div>
+                    </div>
+
+                    <button class="btn btn-primary" onclick="saveConfig()"
+                        style="width: 100%; justify-content: center; margin-top: 0.5rem;">💾 Appliquer</button>
+
+                    <div class="btn-group" style="display: flex; gap: 0.5rem; margin-top: 1rem;">
+                        <button class="btn btn-success" id="btn-start" onclick="startBot()"
+                            style="flex: 1; justify-content: center;">▶ Start</button>
+                        <button class="btn btn-danger" id="btn-stop" onclick="stopBot()"
+                            style="flex: 1; justify-content: center;" disabled>⏹ Stop</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Auto-Optimizer -->
+            <div class="panel" style="margin-bottom: 1rem;">
+                <div class="panel-header">
+                    🧠 Auto-Optimizer
+                    <span id="optimizer-status" style="font-size: 0.75rem; opacity: 0.7;">OFF</span>
+                </div>
+                <div class="panel-content">
+                    <div class="config-group">
+                        <label>Mode</label>
+                        <select id="optimizer-mode"
+                            style="width: 100%; padding: 0.5rem; background: var(--bg-primary); border: 1px solid var(--border-color); border-radius: 4px; color: var(--text-primary);">
+                            <option value="manual">Manuel</option>
+                            <option value="semi_auto">Semi-Auto</option>
+                            <option value="full_auto" selected>Full-Auto</option>
+                        </select>
+                    </div>
+
+                    <div style="font-size: 0.75rem; margin-bottom: 0.5rem;">
+                        <div style="display: flex; justify-content: space-between; margin-bottom: 0.25rem;">
+                            <span style="color: var(--text-secondary);">max_pair_cost</span>
+                            <span id="opt-max-pair-cost" class="mono">0.98</span>
+                        </div>
+                        <div style="display: flex; justify-content: space-between; margin-bottom: 0.25rem;">
+                            <span style="color: var(--text-secondary);">max_pair_cost</span>
+                            <span id="opt-max-pair-cost" class="mono">0.98</span>
+                        </div>
+                        <!-- Order Size Removed (User Controlled) -->
+                        <div style="display: flex; justify-content: space-between; margin-bottom: 0.25rem;">
+                            <span style="color: var(--text-secondary);">first_buy</span>
+                            <span id="opt-first-buy" class="mono">0.55</span>
+                        </div>
+                        <div style="display: flex; justify-content: space-between;">
+                            <span style="color: var(--text-secondary);">adjustments</span>
+                            <span id="opt-adjustments" class="mono" style="color: var(--accent-purple);">0</span>
+                        </div>
+                    </div>
+
+                    <div
+                        style="font-size: 0.7rem; padding: 0.5rem; background: var(--bg-primary); border-radius: 4px; margin-bottom: 0.75rem;">
+                        <div style="color: var(--text-secondary); margin-bottom: 0.25rem;">Conditions:</div>
+                        <div style="display: flex; justify-content: space-between;">
+                            <span>Spread</span>
+                            <span id="opt-cond-spread" class="mono">-</span>
+                        </div>
+                        <div style="display: flex; justify-content: space-between;">
+                            <span>Volatilité</span>
+                            <span id="opt-cond-vol" class="mono">-</span>
+                        </div>
+                    </div>
+
+                    <div class="btn-group" style="display: flex; gap: 0.5rem;">
+                        <button class="btn btn-success btn-sm" id="btn-optimizer-start" onclick="startOptimizer()"
+                            style="flex: 1; justify-content: center;">▶ Start</button>
+                        <button class="btn btn-danger btn-sm" id="btn-optimizer-stop" onclick="stopOptimizer()"
+                            style="flex: 1; justify-content: center;" disabled>⏹ Stop</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Logs -->
+            <div class="panel log-panel">
+                <div class="panel-header">📋 Logs</div>
+                <div class="panel-content" id="activity-log"></div>
+            </div>
+        </div>
+
+        <!-- Right Content -->
+
+        <!-- Active Trades -->
+        <div class="panel active-trades-panel">
+            <div class="panel-header">
+                ⚡ Trades Actifs (Scalping En Cours)
+                <span class="value-col" id="total-pnl" style="font-size: 0.9rem;">Unrealized: $0.00</span>
+            </div>
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Marché</th>
+                            <th>Type</th>
+                            <th>Entrée</th>
+                            <th>Actuel</th>
+                            <th>P&L</th>
+                            <th>Durée</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody id="trades-tbody">
+                        <tr>
+                            <td colspan="7" style="text-align: center; color: var(--text-secondary); padding: 2rem;">
+                                Aucun trade actif</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Opportunities -->
+        <div class="panel opportunities-panel">
+            <div class="panel-header">
+                🎯 Scanner Opportunités (> 50 marchés)
+            </div>
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th style="width: 30px">Sc.</th>
+                            <th>Marché</th>
+                            <th>Spread</th>
+                            <th>Vol ($)</th>
+                            <th>Oui (Bid)</th>
+                            <th>Non (Bid)</th>
+                            <th style="text-align: right">Trade</th>
+                        </tr>
+                    </thead>
+                    <tbody id="opp-tbody">
+                        <tr>
+                            <td colspan="7" style="text-align: center; color: var(--text-secondary); padding: 4rem;">En
+                                attente du scanner...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let ws = null;
+        let isRunning = false;
+
+        // Init
+        document.addEventListener('DOMContentLoaded', () => {
+            loadConfig();
+            fetchStatus();
+            fetchBinanceData();
+            connectWebSocket();
+            setInterval(fetchBinanceData, 10000); // Update Binance every 10s
+            setInterval(fetchStatus, 5000); // Check status every 5s
+        });
+
+        async function fetchStatus() {
+            try {
+                const res = await fetch('/api/status');
+                const data = await res.json();
+                setIsRunning(data.is_running);
+                document.getElementById('markets-count').innerText = data.markets_count || 0;
+            } catch (e) {
+                console.error('Status fetch error:', e);
+            }
+        }
+
+        function connectWebSocket() {
+            try {
+                ws = new WebSocket(`ws://${window.location.host}/ws`);
+                ws.onopen = () => log('📡 Connecté au système', 'var(--accent-green)');
+                ws.onmessage = (e) => {
+                    try {
+                        handleData(JSON.parse(e.data));
+                    } catch (err) {
+                        console.error('WebSocket message error:', err);
+                    }
+                };
+                ws.onerror = (e) => console.error('WebSocket error:', e);
+                ws.onclose = () => {
+                    log('📡 Reconnexion...', 'var(--accent-yellow)');
+                    setTimeout(connectWebSocket, 3000);
+                };
+            } catch (e) {
+                console.error('WebSocket connect error:', e);
+                setTimeout(connectWebSocket, 5000);
+            }
+        }
+
+        function handleData(msg) {
+            if (msg.type === 'update') {
+                renderOpportunities(msg.data.opportunities);
+                renderTrades(msg.data.active_trades);
+                updateStats(msg.data.stats, msg.data.active_trades);
+                document.getElementById('markets-count').innerText = msg.data.markets_count;
+                // Update Auto-Optimizer UI
+                if (msg.data.optimizer) {
+                    updateOptimizerUI(msg.data.optimizer);
+                }
+            } else if (msg.type === 'started') {
+                setIsRunning(true);
+                log('✅ Scanner HFT Démarré', 'var(--accent-green)');
+            } else if (msg.type === 'stopped') {
+                setIsRunning(false);
+                log('🛑 Scanner Arrêté', 'var(--accent-red)');
+            } else if (msg.type === 'trades_update') {
+                renderTrades(msg.data.active);
+                updateStats(msg.data.stats, msg.data.active);
+            }
+        }
+
+        // --- Render Functions ---
+
+        function renderOpportunities(opps) {
+            const tbody = document.getElementById('opp-tbody');
+            if (!opps || opps.length === 0) return;
+
+            tbody.innerHTML = opps.map(op => `
+                <tr>
+                    <td>${'⭐'.repeat(op.score)}</td>
+                    <td class="market-col" title="${op.question}">${op.market}</td>
+                    <td class="value-col" style="color: var(--accent-green); font-weight: bold;">$${op.spread.toFixed(3)}</td>
+                    <td class="value-col">${formatNum(op.volume)}</td>
+                    <td class="value-col">$${op.price_yes.toFixed(2)}</td>
+                    <td class="value-col">$${op.price_no.toFixed(2)}</td>
+                    <td style="text-align: right; white-space: nowrap;">
+                        <button class="trade-btn yes" onclick="enterTrade('${op.market_id}', '${op.question.replace(/'/g, "\\'")}', 'yes', ${op.price_yes}, 50)">Buy YES</button>
+                        <button class="trade-btn no" onclick="enterTrade('${op.market_id}', '${op.question.replace(/'/g, "\\'")}', 'no', ${op.price_no}, 50)">Buy NO</button>
+                    </td>
+                </tr>
+            `).join('');
+        }
+
+        function renderTrades(trades) {
+            const tbody = document.getElementById('trades-tbody');
+            if (!trades || trades.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; color: var(--text-secondary); padding: 2rem;">Aucun trade actif</td></tr>';
+                document.getElementById('total-pnl').innerText = 'Unrealized: $0.00';
+                return;
+            }
+
+            let totalPnl = 0;
+            tbody.innerHTML = trades.map(t => {
+                totalPnl += t.unrealized_pnl;
+                const pnlClass = t.unrealized_pnl >= 0 ? 'profit-pos' : 'profit-neg';
+                return `
+                <tr>
+                    <td class="market-col" title="${t.market_question}">${t.market_question}</td>
+                    <td class="value-col" style="text-transform: uppercase; color: ${t.side === 'yes' ? 'var(--accent-green)' : 'var(--accent-red)'}">${t.side}</td>
+                    <td class="value-col">$${t.entry_price.toFixed(3)}</td>
+                    <td class="value-col">$${t.current_price.toFixed(3)}</td>
+                    <td class="value-col ${pnlClass}">$${t.unrealized_pnl.toFixed(2)} (${t.pnl_percent.toFixed(1)}%)</td>
+                    <td class="value-col">${t.duration_seconds}s</td>
+                    <td>
+                        <button class="btn btn-danger btn-sm" onclick="exitTrade('${t.id}', ${t.current_price})">SORTIR</button>
+                    </td>
+                </tr>
+            `}).join('');
+
+            const totalClass = totalPnl >= 0 ? 'profit-pos' : 'profit-neg';
+            document.getElementById('total-pnl').innerHTML = `Unrealized: <span class="${totalClass}">$${totalPnl.toFixed(2)}</span>`;
+        }
+
+        // --- Actions ---
+
+        async function enterTrade(marketId, question, side, price, size) {
+            if (!confirm(`Confirmer achat ${size} shares de ${side.toUpperCase()} @ $${price} ?`)) return;
+
+            try {
+                const res = await fetch('/api/trades/enter', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        market_id: marketId,
+                        market_question: question,
+                        side: side,
+                        entry_price: price,
+                        size: size
+                    })
+                });
+                const data = await res.json();
+                if (data.success) log(`✅ Trade entré: ${side.toUpperCase()} @ $${price}`, 'var(--accent-green)');
+                else log(`❌ Erreur trade: ${data.message}`, 'var(--accent-red)');
+            } catch (e) { log(`❌ ${e.message}`, 'var(--accent-red)'); }
+        }
+
+        async function exitTrade(tradeId, price) {
+            if (!confirm(`Confirmer fermeture @ $${price} ?`)) return;
+
+            try {
+                const res = await fetch(`/api/trades/${tradeId}/exit`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ exit_price: price })
+                });
+                const data = await res.json();
+                if (data.success) log(`🚪 Trade fermé @ $${price}`, 'var(--accent-yellow)');
+                else log(`❌ Erreur: ${data.message}`, 'var(--accent-red)');
+            } catch (e) { log(`❌ ${e.message}`, 'var(--accent-red)'); }
+        }
+
+        async function fetchBinanceData() {
+            try {
+                const res = await fetch('/api/binance');
+                const data = await res.json();
+                const ticker = document.getElementById('binance-ticker');
+                if (data.length > 0) {
+                    const items = data.slice(0, 10).map(([asset, vol]) =>
+                        `<span class="ticker-item"><span style="color: var(--accent-blue)">${asset.replace('USDT', '')}</span> Vol:${vol.toFixed(1)}%</span>`
+                    ).join('');
+                    ticker.innerHTML = items + items; // Duplicate for smooth scroll
+                }
+            } catch (e) { }
+        }
+
+        // --- Config & Controls ---
+
+        async function loadConfig() {
+            const res = await fetch('/api/config');
+            const data = await res.json();
+            document.getElementById('cfg-spread').value = data.min_spread;
+            document.getElementById('cfg-volume').value = data.min_volume;
+            document.getElementById('cfg-duration').value = data.max_duration_hours;
+            document.getElementById('cfg-capital').value = data.capital_per_trade;
+
+            // Kelly Settings
+            document.getElementById('cfg-kelly-enable').checked = data.enable_kelly_sizing || false;
+            document.getElementById('cfg-kelly-min').value = data.kelly_min_bet || 5.0;
+            document.getElementById('cfg-kelly-max').value = data.kelly_max_bet || 50.0;
+        }
+
+        async function saveConfig() {
+            const config = {
+                min_spread: parseFloat(document.getElementById('cfg-spread').value),
+                min_volume: parseFloat(document.getElementById('cfg-volume').value),
+                max_duration_hours: parseInt(document.getElementById('cfg-duration').value),
+                capital_per_trade: parseFloat(document.getElementById('cfg-capital').value),
+                max_open_positions: 5,
+
+                // Kelly Settings
+                enable_kelly_sizing: document.getElementById('cfg-kelly-enable').checked,
+                kelly_min_bet: parseFloat(document.getElementById('cfg-kelly-min').value),
+                kelly_max_bet: parseFloat(document.getElementById('cfg-kelly-max').value)
+            };
+            await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(config) });
+            log('💾 Config appliquée', 'var(--accent-blue)');
+        }
+
+        async function startBot() {
+            try {
+                const res = await fetch('/api/start', { method: 'POST' });
+                const data = await res.json();
+                if (data.success) {
+                    log('✅ Commande Start envoyée', 'var(--accent-green)');
+                } else {
+                    log(`❌ Erreur Start: ${data.message}`, 'var(--accent-red)');
+                }
+            } catch (e) {
+                log(`❌ Erreur connexion: ${e.message}`, 'var(--accent-red)');
+            }
+        }
+
+        async function stopBot() {
+            try {
+                const res = await fetch('/api/stop', { method: 'POST' });
+                const data = await res.json();
+                if (data.success) {
+                    log('🛑 Commande Stop envoyée', 'var(--accent-yellow)');
+                } else {
+                    log(`❌ Erreur Stop: ${data.message}`, 'var(--accent-red)');
+                }
+            } catch (e) {
+                log(`❌ Erreur connexion: ${e.message}`, 'var(--accent-red)');
+            }
+        }
+
+        function setIsRunning(running) {
+            document.getElementById('status-dot').className = `status-dot ${running ? 'active' : ''}`;
+            document.getElementById('status-text').innerText = running ? 'Actif' : 'Arrêté';
+            document.getElementById('btn-start').disabled = running;
+            document.getElementById('btn-stop').disabled = !running;
+        }
+
+        function updateStats(stats, activeTrades) {
+            if (!stats) return;
+            document.getElementById('stat-trades').innerText = stats.total_trades || 0;
+            document.getElementById('stat-winrate').innerText = `${stats.win_rate || 0}%`;
+            document.getElementById('stat-pnl').innerText = `$${(stats.realized_pnl || 0).toFixed(2)}`;
+            const activeCount = activeTrades ? activeTrades.length : 0;
+            document.getElementById('stat-positions').innerText = `${activeCount}/5`;
+        }
+
+        function log(msg, color) {
+            const div = document.getElementById('activity-log');
+            const time = new Date().toLocaleTimeString();
+            div.innerHTML = `<div class="log-entry" style="color: ${color}"><span style="opacity:0.5">[${time}]</span> ${msg}</div>` + div.innerHTML;
+        }
+
+        function formatNum(n) {
+            if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
+            if (n >= 1e3) return (n / 1e3).toFixed(1) + 'k';
+            return n.toFixed(0);
+        }
+
+        // --- Auto-Optimizer Functions ---
+
+        async function startOptimizer() {
+            try {
+                // Set mode first
+                const mode = document.getElementById('optimizer-mode').value;
+                await fetch('/api/optimizer/mode', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ mode: mode })
+                });
+
+                const res = await fetch('/api/optimizer/start', { method: 'POST' });
+                const data = await res.json();
+                if (data.success) {
+                    log('🧠 Auto-Optimizer démarré', 'var(--accent-purple)');
+                    setOptimizerRunning(true);
+                } else {
+                    log(`❌ Optimizer: ${data.message}`, 'var(--accent-red)');
+                }
+            } catch (e) {
+                log(`❌ Erreur Optimizer: ${e.message}`, 'var(--accent-red)');
+            }
+        }
+
+        async function stopOptimizer() {
+            try {
+                const res = await fetch('/api/optimizer/stop', { method: 'POST' });
+                const data = await res.json();
+                if (data.success) {
+                    log('🧠 Auto-Optimizer arrêté', 'var(--accent-yellow)');
+                    setOptimizerRunning(false);
+                }
+            } catch (e) {
+                log(`❌ Erreur: ${e.message}`, 'var(--accent-red)');
+            }
+        }
+
+        function setOptimizerRunning(running) {
+            document.getElementById('optimizer-status').innerText = running ? 'ON' : 'OFF';
+            document.getElementById('optimizer-status').style.color = running ? 'var(--accent-green)' : '';
+            document.getElementById('btn-optimizer-start').disabled = running;
+            document.getElementById('btn-optimizer-stop').disabled = !running;
+        }
+
+        function updateOptimizerUI(optimizer) {
+            if (!optimizer || !optimizer.running) {
+                setOptimizerRunning(false);
+                return;
+            }
+
+            setOptimizerRunning(optimizer.running);
+
+            // Update params
+            if (optimizer.current_params) {
+                const p = optimizer.current_params;
+                document.getElementById('opt-max-pair-cost').innerText = (p.max_pair_cost || 0.98).toFixed(3);
+                document.getElementById('opt-order-size').innerText = '$' + (p.order_size_usd || 25).toFixed(0);
+                document.getElementById('opt-first-buy').innerText = (p.first_buy_threshold || 0.55).toFixed(3);
+            }
+
+            // Update adjustments count
+            document.getElementById('opt-adjustments').innerText = optimizer.total_adjustments || 0;
+
+            // Update conditions
+            if (optimizer.conditions) {
+                const c = optimizer.conditions;
+                document.getElementById('opt-cond-spread').innerText = (c.avg_spread || 0).toFixed(4);
+                document.getElementById('opt-cond-vol').innerText = (c.volatility_score || 0).toFixed(1);
+            }
+
+            // Update mode dropdown
+            if (optimizer.mode) {
+                document.getElementById('optimizer-mode').value = optimizer.mode;
+            }
+        }
+
+        // Handle mode change
+        document.getElementById('optimizer-mode').addEventListener('change', async (e) => {
+            try {
+                const res = await fetch('/api/optimizer/mode', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ mode: e.target.value })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    log(`🧠 Mode: ${e.target.value}`, 'var(--accent-purple)');
+                }
+            } catch (err) {
+                console.error('Mode change error:', err);
+            }
+        });
+    </script>
+</body>
+
+</html>

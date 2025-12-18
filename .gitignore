@@ -1,0 +1,33 @@
+# Fichiers à ignorer par Git
+
+# Environnement et secrets
+.env
+*.enc
+wallet.enc
+credentials.enc
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+.venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Données locales
+data/trades.json
+data/opportunities.json
+config/trading_params.json
+
+# Logs
+*.log
+logs/
