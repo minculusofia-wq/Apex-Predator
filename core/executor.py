@@ -168,7 +168,6 @@ class OrderExecutor:
 
         try:
             self._client = PolymarketPrivateClient(self._credentials)
-            await self._client.__aenter__()
 
             # HFT: Pré-chauffer les connexions TLS (gain ~50-150ms sur premier ordre)
             await self._client.warm_connections()
@@ -225,7 +224,6 @@ class OrderExecutor:
             self._order_queue = None
 
         if self._client:
-            await self._client.__aexit__(None, None, None)
             self._client = None
 
         # Cleanup: Libérer les locks de marché (évite memory leak)
