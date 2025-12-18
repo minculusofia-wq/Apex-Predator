@@ -303,7 +303,7 @@ async def update_config(config: ConfigUpdate):
 @app.post("/api/start")
 async def start_scanner():
     """Démarre le scanner."""
-    global scanner, analyzer, order_manager, trade_manager, binance_client, cg_client, private_client, is_running
+    global scanner, analyzer, order_manager, trade_manager, binance_client, cg_client, private_client, executor, is_running
 
     if is_running:
         return {"success": False, "message": "Déjà en cours d'exécution"}
