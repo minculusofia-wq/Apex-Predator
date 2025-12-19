@@ -30,11 +30,11 @@ class TradingParams:
     max_spread: float = 0.20      # Spread max réduit (évite marchés trop illiquides)
 
     # ═══════════════════════════════════════════════════════════════
-    # PARAMÈTRES DE VOLUME (Optimisés HFT)
+    # PARAMÈTRES DE VOLUME (Ajustés pour voir plus d'opportunités)
     # ═══════════════════════════════════════════════════════════════
-    min_volume_usd: float = 20000.0    # Volume minimum 20k$ (marchés liquides)
+    min_volume_usd: float = 5000.0     # Volume minimum 5k$ (plus de marchés visibles)
     min_depth_usd: float = 50.0        # Profondeur carnet min 50$ (évite fake liquidity)
-    max_duration_hours: int = 24       # Durée max du marché (short-term focus)
+    max_duration_hours: int = 168      # 7 jours max (élargi pour voir plus)
 
     # ═══════════════════════════════════════════════════════════════
     # PARAMÈTRES DE CAPITAL (Gabagool)

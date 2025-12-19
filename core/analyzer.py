@@ -460,11 +460,26 @@ class OpportunityAnalyzer:
             Liste d'opportunités triées par score (desc)
         """
         opportunities = []
+        filtered_reasons = {"invalid": 0, "spread_low": 0, "spread_high": 0, "volume": 0, "duration": 0, "passed": 0}
 
         for market_data in markets.values():
             opportunity = self.analyze_market(market_data, volatility_map)
             if opportunity:
                 opportunities.append(opportunity)
+                filtered_reasons["passed"] += 1
+            else:
+                # Track why filtered (for debugging)
+                if not market_data.is_valid:
+                    filtered_reasons["invalid"] += 1
+                elif market_data.market.volume < self._params.min_volume_usd:
+                    filtered_reasons["volume"] += 1
+                else:
+                    filtered_reasons["spread_low"] += 1
+
+        # Log filtering stats periodically
+        total = len(markets)
+        if total > 0 and filtered_reasons["passed"] == 0:
+            print(f"⚠️ [Analyzer] 0/{total} opportunités - Filtres: vol<{self._params.min_volume_usd}$={filtered_reasons['volume']}, spread={filtered_reasons['spread_low']}, invalid={filtered_reasons['invalid']}")
 
         # Trier par score décroissant
         opportunities.sort(key=lambda x: (x.score, x.effective_spread), reverse=True)
