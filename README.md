@@ -1,11 +1,11 @@
-# Bot HFT PolyScalper - Crypto Edition (v4.3)
+# Bot HFT PolyScalper - Crypto Edition (v4.4)
 
 Bot de trading haute fréquence (HFT) pour scalper les marchés crypto court terme sur Polymarket.
 Optimisé pour la **vitesse d'exécution**, la **gestion du risque** et l'**automatisation intelligente**.
 
 ![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)
 ![License](https://img.shields.io/badge/License-MIT-green.svg)
-![Status](https://img.shields.io/badge/Status-Production-red.svg)
+![Status](https://img.shields.io/badge/Status-Production-green.svg)
 
 ## 🚀 Fonctionnalités Clés
 
@@ -34,6 +34,13 @@ Optimisations de latence pour trading haute fréquence:
 | **Event-driven Triggers** | 20-50ms | Réaction instantanée aux updates WebSocket |
 | **Local Orderbook** | ~100ms | Miroir O(log n) avec SortedDict |
 | **Speculative Engine** | 3-5ms | Pré-calcul des ordres pour top opportunités |
+
+### 🔧 Correctifs v4.4 (Production Ready)
+- **ApiCreds Fix** : Correction du bug py-clob-client avec credentials (était dict, maintenant ApiCreds)
+- **Connection Warming** : Utilise désormais httpx direct pour éviter les bugs SDK
+- **Auto Trading Toggle** : Bouton dans le dashboard avec logs visibles
+- **Executor Bugs Fixed** : Correction des erreurs `__aenter__` et `global executor`
+- **Logs Améliorés** : Statut auto-trading affiché dans les logs serveur
 
 ### 🤖 Auto-Optimizer (IA de Pilotage)
 Ajuste dynamiquement les paramètres du bot selon les conditions de marché (volatilité, spread, liquidité).

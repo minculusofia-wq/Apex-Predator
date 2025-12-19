@@ -276,7 +276,11 @@ async def update_config(config: ConfigUpdate):
     params.max_duration_hours = max(1, min(720, config.max_duration_hours))
     params.capital_per_trade = max(0, min(10000, config.capital_per_trade))
     params.max_open_positions = max(0, min(50, config.max_open_positions))
+    old_auto_trading = params.auto_trading_enabled
     params.auto_trading_enabled = config.auto_trading_enabled
+    if old_auto_trading != config.auto_trading_enabled:
+        status = "✅ ACTIVÉ" if config.auto_trading_enabled else "⏸️ DÉSACTIVÉ"
+        print(f"🤖 [Auto Trading] {status}")
 
     # Update Kelly Settings
     settings = get_settings()

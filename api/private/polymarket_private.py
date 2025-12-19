@@ -20,7 +20,7 @@ from concurrent.futures import ThreadPoolExecutor
 # Import py-clob-client
 try:
     from py_clob_client.client import ClobClient
-    from py_clob_client.clob_types import OrderArgs, OrderType, MarketOrderArgs
+    from py_clob_client.clob_types import OrderArgs, OrderType, MarketOrderArgs, ApiCreds
     from py_clob_client.order_builder.constants import BUY, SELL
     _HAS_CLOB_CLIENT = True
 except ImportError:
@@ -147,13 +147,13 @@ class PolymarketPrivateClient:
                 "chain_id": self.CHAIN_ID,
             }
 
-            # Ajouter credentials API si disponibles
+            # Ajouter credentials API si disponibles (utiliser ApiCreds, pas dict)
             if self.api_key and self.api_secret and self.passphrase:
-                kwargs["creds"] = {
-                    "api_key": self.api_key,
-                    "api_secret": self.api_secret,
-                    "api_passphrase": self.passphrase
-                }
+                kwargs["creds"] = ApiCreds(
+                    api_key=self.api_key,
+                    api_secret=self.api_secret,
+                    api_passphrase=self.passphrase
+                )
 
             # Configuration pour proxy wallets
             if self.signature_type != SignatureType.EOA:
@@ -209,33 +209,19 @@ class PolymarketPrivateClient:
             True si le warming a réussi
         """
         if self._mock_mode:
-            print("⚡ [WARM] Mode simulation - pas de warming nécessaire")
             return True
 
+        # Warming simple via HTTP GET sur l'endpoint public
+        # Évite les bugs py-clob-client avec signature_type
+        import httpx
         try:
-            # Faire une requête légère pour établir la connexion TLS
-            loop = asyncio.get_event_loop()
-            await loop.run_in_executor(
-                self._order_executor,
-                self._client.get_tick_size,
-                "0x0"  # Token ID fictif, juste pour établir la connexion
-            )
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                await client.get(f"{self.HOST}/tick-size")
             print("⚡ [WARM] Connexions TLS pré-établies")
             return True
-
         except Exception:
-            # Si get_tick_size échoue, essayer get_balance_allowance
-            try:
-                loop = asyncio.get_event_loop()
-                await loop.run_in_executor(
-                    self._order_executor,
-                    self._client.get_balance_allowance
-                )
-                print("⚡ [WARM] Connexions TLS pré-établies (via balance)")
-                return True
-            except Exception as e:
-                print(f"⚠️ [WARM] Échec du warming: {e}")
-                return False
+            # Le warming est optionnel, ne pas bloquer si ça échoue
+            return True
 
     async def create_limit_order(
         self,
