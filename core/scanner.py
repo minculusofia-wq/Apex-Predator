@@ -133,7 +133,10 @@ class MarketScanner:
         self._immediate_triggers: int = 0  # Compteur de triggers immédiats
         self._last_trigger_times: dict[str, float] = {}  # Anti-spam: market_id -> last_trigger_time
         self._trigger_cooldown: float = 0.3  # Cooldown 300ms (plus réactif)
-    
+
+        # Thread-safety pour accès concurrent aux marchés
+        self._markets_lock = asyncio.Lock()
+
     @property
     def state(self) -> ScannerState:
         """État actuel du scanner."""
@@ -143,6 +146,11 @@ class MarketScanner:
     def markets(self) -> dict[str, MarketData]:
         """Marchés actuellement suivis (référence directe - pas de copie)."""
         return self._markets  # 5.6: Retourner référence directe (pas de .copy())
+
+    async def get_markets_snapshot(self) -> dict[str, MarketData]:
+        """Retourne une copie thread-safe des marchés pour éviter les race conditions."""
+        async with self._markets_lock:
+            return dict(self._markets)
 
     @property
     def market_count(self) -> int:

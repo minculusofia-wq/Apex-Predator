@@ -9,6 +9,8 @@ Principe:
 
 import asyncio
 import json
+import time
+from collections import deque
 from pathlib import Path
 from typing import Optional, Dict, List, Tuple
 from dataclasses import dataclass, field, asdict
@@ -19,6 +21,7 @@ from core.executor import OrderExecutor
 from core.order_queue import OrderPriority
 from core.indicators import calculate_rsi
 from config import get_settings
+from config.trading_params import get_trading_params
 
 
 class GabagoolStatus(Enum):
@@ -135,10 +138,37 @@ class GabagoolEngine:
         self._is_running = False
         self._persistence_path = Path(self.config.persistence_file)
         self._lock = asyncio.Lock()
-        
-        # Historique des prix pour RSI (market_id -> list of mid_prices)
-        self._price_history: Dict[str, List[float]] = {}
+
+        # Historique des prix pour RSI (optimisé avec deque O(1))
+        self._price_history: Dict[str, deque] = {}
+
+        # Cache RSI avec TTL (évite recalcul redondant)
+        self._rsi_cache: Dict[str, Tuple[float, float]] = {}  # market_id -> (timestamp, rsi_value)
+        self._rsi_cache_ttl: float = 5.0  # Valide 5 secondes
+
         self._maintenance_task: Optional[asyncio.Task] = None
+
+    def _get_cached_rsi(self, market_id: str) -> Optional[float]:
+        """Retourne le RSI avec cache TTL pour éviter recalcul redondant."""
+        now = time.time()
+
+        # Vérifier le cache
+        if market_id in self._rsi_cache:
+            cached_time, cached_rsi = self._rsi_cache[market_id]
+            if now - cached_time < self._rsi_cache_ttl:
+                return cached_rsi
+
+        # Calculer le RSI
+        if market_id not in self._price_history or len(self._price_history[market_id]) < self.config.rsi_period:
+            return None
+
+        rsi = calculate_rsi(list(self._price_history[market_id]), self.config.rsi_period)
+
+        # Mettre en cache
+        if rsi is not None:
+            self._rsi_cache[market_id] = (now, rsi)
+
+        return rsi
 
     async def start(self):
         async with self._lock:
@@ -317,14 +347,11 @@ class GabagoolEngine:
         if not self._is_running or not self.executor:
             return None, 0.0
 
-        # Mise à jour historique prix (Mid Price)
+        # Mise à jour historique prix (Mid Price) - O(1) avec deque
         mid_price = (price_yes + (1.0 - price_no)) / 2  # Approx simple
         if market_id not in self._price_history:
-            self._price_history[market_id] = []
-        self._price_history[market_id].append(mid_price)
-        # Garder max 100 ticks
-        if len(self._price_history[market_id]) > 100:
-            self._price_history[market_id].pop(0)
+            self._price_history[market_id] = deque(maxlen=100)  # Auto-trim à 100
+        self._price_history[market_id].append(mid_price)  # O(1)
 
         async with self._lock:
             position = self.positions.get(market_id)
@@ -443,8 +470,8 @@ class GabagoolEngine:
                 # print(f"🌊 OBI: High Bid Pressure on NO ({obi_no:.2f}). Blocking YES buy.")
                 buy_yes_candidate = False
 
-            # --- 2. TREND FILTER CHECK ---
-            rsi = calculate_rsi(self._price_history[market_id], self.config.rsi_period)
+            # --- 2. TREND FILTER CHECK (avec cache TTL) ---
+            rsi = self._get_cached_rsi(market_id)
             
             if self.config.trend_filter_enabled and rsi is not None:
                 # Règle "Breakout Protection":
@@ -486,7 +513,13 @@ class GabagoolEngine:
 
     async def place_order(self, market_id: str, side: str, price: float = 0.0, qty: float = 0.0) -> bool:
         """Passe un ordre réel via l'executor (non-bloquant)."""
-        if not self.executor: 
+        # Vérifier auto_trading_enabled
+        params = get_trading_params()
+        if not params.auto_trading_enabled:
+            print(f"⏸️ [Gabagool] Auto Trading OFF - Ordre {side} ignoré")
+            return False
+
+        if not self.executor:
             print("⚠️ [Gabagool] Executor non configuré. Mode Simulation.")
             # return False # Allow simulation if no executor
 

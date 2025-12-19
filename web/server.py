@@ -69,6 +69,11 @@ async def lifespan(app: FastAPI):
     print("🚀 HFT Scalper Bot v2.0 - Serveur Web démarré")
     print("📊 Dashboard: http://localhost:8000")
     print_performance_status()  # Affiche le statut des optimisations
+
+    # Afficher le statut auto-trading au démarrage
+    params = get_trading_params()
+    auto_status = "✅ ACTIVÉ" if params.auto_trading_enabled else "⏸️ DÉSACTIVÉ"
+    print(f"🤖 [Auto Trading] {auto_status}")
     yield
     # Shutdown
     print("\n🛑 Arrêt du bot en cours...")
@@ -587,7 +592,65 @@ async def start_gabagool():
             gabagool_engine = GabagoolEngine(config=GabagoolConfig(), executor=executor)
 
         await gabagool_engine.start()
-        return {"success": True, "message": "Gabagool démarré"}
+
+        # ═══════════════════════════════════════════════════════════════
+        # EVENT-DRIVEN: Connecter le callback pour réaction instantanée
+        # ═══════════════════════════════════════════════════════════════
+        async def on_immediate_opportunity(market_data):
+            """Callback instantané quand le scanner détecte un changement de prix."""
+            if not gabagool_engine or not gabagool_engine.is_running:
+                return
+
+            # Vérifier que les prix sont valides
+            price_yes = market_data.best_ask_yes or 0
+            price_no = market_data.best_ask_no or 0
+            if price_yes <= 0 or price_no <= 0:
+                return
+
+            # Quick filter: pair_cost doit être < 1.0 pour être intéressant
+            pair_cost = price_yes + price_no
+            if pair_cost >= 0.995:
+                return
+
+            try:
+                # Analyser immédiatement sans attendre broadcast_loop
+                action, size_usd = await gabagool_engine.analyze_opportunity(
+                    market_id=market_data.market.id,
+                    token_yes_id=market_data.market.token_yes_id,
+                    token_no_id=market_data.market.token_no_id,
+                    price_yes=price_yes,
+                    price_no=price_no,
+                    question=market_data.market.question,
+                    obi_yes=0.0,
+                    obi_no=0.0
+                )
+
+                if action == "buy_yes" and price_yes > 0:
+                    print(f"🔥 [Event-Driven] BUY YES {market_data.market.question[:40]}... @ {price_yes:.3f}")
+                    await gabagool_engine.buy_yes(
+                        market_id=market_data.market.id,
+                        token_id=market_data.market.token_yes_id,
+                        price=price_yes,
+                        qty=size_usd / price_yes,
+                        question=market_data.market.question
+                    )
+                elif action == "buy_no" and price_no > 0:
+                    print(f"🔥 [Event-Driven] BUY NO {market_data.market.question[:40]}... @ {price_no:.3f}")
+                    await gabagool_engine.buy_no(
+                        market_id=market_data.market.id,
+                        token_id=market_data.market.token_no_id,
+                        price=price_no,
+                        qty=size_usd / price_no,
+                        question=market_data.market.question
+                    )
+            except Exception as e:
+                print(f"⚠️ [Event-Driven] Erreur: {e}")
+
+        # Connecter le callback au scanner
+        scanner.on_immediate_analysis = on_immediate_opportunity
+        print("🔗 [Gabagool] Event-driven callback connecté au scanner")
+
+        return {"success": True, "message": "Gabagool démarré (Event-Driven activé)"}
 
     except Exception as e:
         return {"success": False, "message": str(e)}
@@ -818,6 +881,19 @@ async def broadcast_loop():
     """Boucle de broadcast des données."""
     global scanner, analyzer, is_running, cg_client, trade_manager, market_maker, gabagool_engine, auto_optimizer
 
+    # HFT: Connection warming périodique pour éviter cold starts
+    async def keep_connections_warm():
+        while is_running:
+            await asyncio.sleep(30)  # Toutes les 30 secondes
+            try:
+                if private_client:
+                    await private_client.warm_connections()
+            except Exception:
+                pass  # Silencieux en cas d'erreur
+
+    # Lancer le warming en background
+    warming_task = asyncio.create_task(keep_connections_warm())
+
     while is_running:
         try:
             if scanner and analyzer:
@@ -838,37 +914,55 @@ async def broadcast_loop():
                 if market_maker and market_maker.is_running:
                     market_maker.update_markets(markets)
 
-                # Gabagool: Analyser les opportunités d'arbitrage
+                # Gabagool: Analyser les opportunités d'arbitrage (PARALLÉLISÉ)
                 if gabagool_engine and gabagool_engine.is_running:
                     # Mettre à jour les marchés prioritaires pour le scanner
                     scanner.set_priority_markets(gabagool_engine.get_active_position_ids())
 
-                    for market_id, market_data in markets.items():
-                        if not market_data.is_valid:
-                            continue
-                        market = market_data.market
-                        # Analyser si on doit acheter YES ou NO
-                        # Analyser si on doit acheter YES ou NO
-                        action, size_usd = await gabagool_engine.analyze_opportunity(
-                            market_id=market_id,
-                            token_yes_id=market.token_yes_id,
-                            token_no_id=market.token_no_id,
-                            price_yes=market_data.best_ask_yes or 1.0,
-                            price_no=market_data.best_ask_no or 1.0,
-                            question=market.question
-                        )
-                        if action == "buy_yes" and market_data.best_ask_yes:
-                            qty = size_usd / market_data.best_ask_yes
-                            await gabagool_engine.buy_yes(
-                                market_id, market.token_yes_id,
-                                market_data.best_ask_yes, qty, market.question
+                    # Créer liste de marchés valides
+                    valid_markets = [
+                        (mid, mdata) for mid, mdata in markets.items()
+                        if mdata.is_valid and mdata.best_ask_yes and mdata.best_ask_no
+                    ]
+
+                    # Analyser par batch de 10 en parallèle
+                    async def analyze_single(mid, mdata):
+                        try:
+                            market = mdata.market
+                            action, size_usd = await gabagool_engine.analyze_opportunity(
+                                market_id=mid,
+                                token_yes_id=market.token_yes_id,
+                                token_no_id=market.token_no_id,
+                                price_yes=mdata.best_ask_yes or 1.0,
+                                price_no=mdata.best_ask_no or 1.0,
+                                question=market.question
                             )
-                        elif action == "buy_no" and market_data.best_ask_no:
-                            qty = size_usd / market_data.best_ask_no
-                            await gabagool_engine.buy_no(
-                                market_id, market.token_no_id,
-                                market_data.best_ask_no, qty, market.question
-                            )
+                            return (mid, mdata, action, size_usd)
+                        except Exception:
+                            return (mid, mdata, None, 0)
+
+                    # Traiter par batch pour éviter surcharge
+                    batch_size = 10
+                    for i in range(0, len(valid_markets), batch_size):
+                        batch = valid_markets[i:i+batch_size]
+                        results = await asyncio.gather(*[
+                            analyze_single(mid, mdata) for mid, mdata in batch
+                        ])
+
+                        # Exécuter les ordres (séquentiellement pour éviter race conditions)
+                        for mid, mdata, action, size_usd in results:
+                            if action == "buy_yes" and mdata.best_ask_yes:
+                                qty = size_usd / mdata.best_ask_yes
+                                await gabagool_engine.buy_yes(
+                                    mid, mdata.market.token_yes_id,
+                                    mdata.best_ask_yes, qty, mdata.market.question
+                                )
+                            elif action == "buy_no" and mdata.best_ask_no:
+                                qty = size_usd / mdata.best_ask_no
+                                await gabagool_engine.buy_no(
+                                    mid, mdata.market.token_no_id,
+                                    mdata.best_ask_no, qty, mdata.market.question
+                                )
 
                 # Update trade prices if any
                 if trade_manager:
@@ -912,11 +1006,11 @@ async def broadcast_loop():
                     }
                 })
 
-            await asyncio.sleep(2)
+            await asyncio.sleep(0.5)  # HFT: 500ms au lieu de 2s (4x plus réactif)
 
         except Exception as e:
             print(f"Broadcast error: {e}")
-            await asyncio.sleep(5)
+            await asyncio.sleep(2)  # Attente réduite en cas d'erreur
 
 async def broadcast_trades():
     """Broadcast uniquement les mises à jour de trades."""

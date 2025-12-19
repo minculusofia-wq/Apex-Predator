@@ -305,6 +305,9 @@ class OrderExecutor:
                 # Vérifier si on peut trader
                 can_trade, reason = await self.can_trade()
                 if not can_trade:
+                    # Log seulement si auto-trading désactivé (une fois par opportunité)
+                    if "automatique désactivé" in reason:
+                        print(f"⏸️ [Auto Trading OFF] Opportunité ignorée: {opportunity.symbol}")
                     return TradeResult(
                         opportunity_id=opportunity.id,
                         success=False,
