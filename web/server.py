@@ -35,6 +35,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from config import get_settings, get_trading_params, update_trading_params, TradingParams
 from core import MarketScanner, OpportunityAnalyzer, OrderManager, OrderExecutor, TradeManager, TradeSide, MarketMaker, MMConfig, GabagoolEngine, GabagoolConfig
 from core.scanner import ScannerState
+from core.lifecycle import get_health_checker, get_metrics_manager, get_graceful_shutdown, ComponentHealth
+from core.resilience import get_circuit_stats
 from core.auto_optimizer import AutoOptimizer, OptimizerMode
 from core.performance import (
     setup_uvloop,
@@ -1054,6 +1056,73 @@ async def get_performance():
         },
         "scanner": scanner_stats,
     }
+
+
+# ═══════════════════════════════════════════════════════════════
+# HEALTH CHECK & METRICS
+# ═══════════════════════════════════════════════════════════════
+
+@app.get("/api/health")
+async def health_check():
+    """
+    Health check endpoint pour monitoring.
+
+    Retourne le statut de santé de tous les composants.
+    """
+    global scanner, gabagool_engine, executor
+
+    health_checker = get_health_checker()
+
+    # Enregistrer les composants si pas déjà fait
+    def scanner_health() -> ComponentHealth:
+        if scanner and scanner.state == ScannerState.RUNNING:
+            return ComponentHealth("scanner", "healthy", "Running")
+        elif scanner and scanner.state == ScannerState.STARTING:
+            return ComponentHealth("scanner", "degraded", "Starting")
+        return ComponentHealth("scanner", "unhealthy", "Not running")
+
+    def gabagool_health() -> ComponentHealth:
+        if gabagool_engine and gabagool_engine._is_running:
+            return ComponentHealth("gabagool", "healthy", "Running")
+        return ComponentHealth("gabagool", "unhealthy", "Not running")
+
+    def executor_health() -> ComponentHealth:
+        if executor:
+            return ComponentHealth("executor", "healthy", "Ready")
+        return ComponentHealth("executor", "unhealthy", "Not initialized")
+
+    health_checker.register_component("scanner", scanner_health)
+    health_checker.register_component("gabagool", gabagool_health)
+    health_checker.register_component("executor", executor_health)
+
+    return health_checker.check_all()
+
+
+@app.get("/api/metrics")
+async def get_metrics():
+    """
+    Retourne les métriques internes du bot.
+
+    Inclut: trades, profit, latence, erreurs, uptime.
+    """
+    metrics = get_metrics_manager().get_metrics()
+    circuits = get_circuit_stats()
+
+    return {
+        "metrics": metrics,
+        "circuit_breakers": circuits
+    }
+
+
+@app.post("/api/metrics/reset")
+async def reset_metrics():
+    """Remet à zéro les métriques (sauf les cumulatifs)."""
+    metrics_manager = get_metrics_manager()
+    metrics_manager._metrics.latency_samples = 0
+    metrics_manager._metrics.total_latency_ms = 0
+    metrics_manager._metrics.errors_count = 0
+    metrics_manager.save()
+    return {"success": True, "message": "Metrics reset"}
 
 
 if __name__ == "__main__":

@@ -29,6 +29,17 @@ from .performance import (
 )
 from .speculative_engine import SpeculativeEngine, SpeculativeOrder
 from .local_orderbook import LocalOrderbook, OrderbookManager
+from .logger import get_logger, BotLogger, log_execution_time
+from .resilience import (
+    retry_async, RetryConfig,
+    CircuitBreaker, CircuitBreakerConfig, CircuitOpenError,
+    OrderValidator, get_order_validator, get_circuit_stats,
+    polymarket_circuit, order_circuit
+)
+from .lifecycle import (
+    get_metrics_manager, get_health_checker, get_graceful_shutdown,
+    MetricsManager, HealthChecker, GracefulShutdown, ComponentHealth
+)
 
 __all__ = [
     "MarketScanner",
@@ -74,4 +85,27 @@ __all__ = [
     # Local Orderbook Mirror (HFT)
     "LocalOrderbook",
     "OrderbookManager",
+    # Logger (v6.0)
+    "get_logger",
+    "BotLogger",
+    "log_execution_time",
+    # Resilience (v6.0)
+    "retry_async",
+    "RetryConfig",
+    "CircuitBreaker",
+    "CircuitBreakerConfig",
+    "CircuitOpenError",
+    "OrderValidator",
+    "get_order_validator",
+    "get_circuit_stats",
+    "polymarket_circuit",
+    "order_circuit",
+    # Lifecycle (v6.0)
+    "get_metrics_manager",
+    "get_health_checker",
+    "get_graceful_shutdown",
+    "MetricsManager",
+    "HealthChecker",
+    "GracefulShutdown",
+    "ComponentHealth",
 ]
