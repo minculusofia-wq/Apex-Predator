@@ -202,8 +202,9 @@ async def get_opportunities():
     
     if not scanner or not analyzer:
         return {"opportunities": []}
-    
-    markets = scanner.markets
+
+    # Thread-safe: utiliser snapshot au lieu d'accès direct
+    markets = await scanner.get_markets_snapshot()
     opportunities = analyzer.analyze_all_markets(markets)
     
     return {
@@ -474,8 +475,9 @@ async def start_market_maker():
         if not market_maker:
             market_maker = MarketMaker(private_client=private_client)
 
-        await market_maker.start(scanner.markets)
-        return {"success": True, "message": "Market Maker démarré", "markets": len(scanner.markets)}
+        markets_snapshot = await scanner.get_markets_snapshot()
+        await market_maker.start(markets_snapshot)
+        return {"success": True, "message": "Market Maker démarré", "markets": len(markets_snapshot)}
 
     except Exception as e:
         return {"success": False, "message": str(e)}
@@ -907,7 +909,8 @@ async def broadcast_loop():
                 except Exception as e:
                     print(f"CoinGecko Vol error: {e}")
 
-                markets = scanner.markets
+                # Thread-safe: utiliser snapshot au lieu d'accès direct
+                markets = await scanner.get_markets_snapshot()
                 opportunities = analyzer.analyze_all_markets(markets, volatility_map)
 
                 # Update Market Maker with fresh market data

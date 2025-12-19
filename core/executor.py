@@ -12,7 +12,7 @@ Optimisation 4.1: Intégration OrderQueue pour exécution non-bloquante
 """
 
 import asyncio
-from typing import Optional, Callable, Dict
+from typing import Optional, Callable, Dict, Any
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum

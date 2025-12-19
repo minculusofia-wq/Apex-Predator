@@ -583,18 +583,19 @@ class GabagoolEngine:
 
     async def buy_yes(self, market_id: str, token_id: str, price: float, qty: float, question: str):
         """Helper pour acheter des YES."""
-        # S'assurer que la position existe ou la créer
         if market_id not in self.positions:
-            # Note: Si on arrive ici, analyze_opportunity a dû valider la création
-            # Mais il faut token_no_id... c'est le problème.
-            # analyze_opportunity crée la position vide.
-            pass
-        
-        await self.place_order(market_id, "YES", price, qty)
+            print(f"⚠️ [Gabagool] buy_yes: Position {market_id} n'existe pas! Ordre ignoré.")
+            return False
+
+        return await self.place_order(market_id, "YES", price, qty)
 
     async def buy_no(self, market_id: str, token_id: str, price: float, qty: float, question: str):
         """Helper pour acheter des NO."""
-        await self.place_order(market_id, "NO", price, qty)
+        if market_id not in self.positions:
+            print(f"⚠️ [Gabagool] buy_no: Position {market_id} n'existe pas! Ordre ignoré.")
+            return False
+
+        return await self.place_order(market_id, "NO", price, qty)
 
     def get_stats(self) -> dict:
         """Retourne les statistiques globales de la stratégie."""
