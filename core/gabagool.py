@@ -33,17 +33,25 @@ class GabagoolStatus(Enum):
 
 @dataclass
 class GabagoolConfig:
-    """Configuration de la stratégie Gabagool."""
-    max_pair_cost: float = 0.985  # Ne pas acheter si le pair_cost dépasse ce seuil
-    min_profit_margin: float = 0.015 # Marge de profit minimale visée (1 - max_pair_cost)
-    min_improvement: float = 0.000 # Amélioration minimale du pair cost requise (défaut: >0)
+    """
+    Configuration de la stratégie Gabagool (Alignée sur stratégie originale).
+
+    Stratégie originale:
+    - Acheter YES et NO asymétriquement quand pair_cost < 0.99
+    - Frais Polymarket: 2% sur gains → seuil réel < 0.975
+    - Focus marchés court terme (15min-4h)
+    - Équilibrer Qty_YES ≈ Qty_NO pour hedge maximum
+    """
+    max_pair_cost: float = 0.975  # Seuil incluant 2% frais Polymarket
+    min_profit_margin: float = 0.025  # Marge minimum 2.5% (après frais = ~0.5% net)
+    min_improvement: float = 0.001  # Amélioration minimale requise pour acheter
     order_size_usd: float = 25.0  # Taille de chaque ordre en USD
     max_position_usd: float = 500.0  # Position maximale par marché en USD
-    balance_ratio_threshold: float = 1.5  # Ratio max entre qty_yes et qty_no
+    balance_ratio_threshold: float = 1.3  # Ratio max YES/NO (plus strict pour équilibre)
     persistence_file: str = "data/gabagool_positions.json"
 
-    # 9/10 Optimization Params
-    kill_switch_minutes: int = 20  # Liquider si pas locké après 20 min
+    # Timing & Risk Management
+    kill_switch_minutes: int = 15  # Liquider si pas locké après 15 min (plus agressif)
     rsi_period: int = 14
     rsi_overbought: float = 70.0
     rsi_oversold: float = 30.0

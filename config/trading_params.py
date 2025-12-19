@@ -24,10 +24,11 @@ class TradingParams:
     """
 
     # ═══════════════════════════════════════════════════════════════
-    # PARAMÈTRES GABAGOOL (Critère principal: pair_cost < 1.00)
+    # PARAMÈTRES GABAGOOL (Aligné sur stratégie originale rentable)
+    # Frais Polymarket: 2% sur gains → seuil réel doit être < 0.98
     # ═══════════════════════════════════════════════════════════════
-    max_pair_cost: float = 0.995  # Coût max YES+NO pour afficher une opportunité (< 1.0 = profit)
-    min_profit_margin: float = 0.005  # Marge de profit minimum (1.0 - pair_cost)
+    max_pair_cost: float = 0.975  # Coût max YES+NO (inclut marge pour 2% frais Polymarket)
+    min_profit_margin: float = 0.025  # Marge profit minimum 2.5% (couvre frais + profit)
 
     # ═══════════════════════════════════════════════════════════════
     # PARAMÈTRES DE SPREAD (Secondaires pour Gabagool)
@@ -36,11 +37,11 @@ class TradingParams:
     max_spread: float = 1.00      # Spread max désactivé
 
     # ═══════════════════════════════════════════════════════════════
-    # PARAMÈTRES DE VOLUME (Secondaires pour Gabagool)
+    # PARAMÈTRES DE VOLUME (Aligné Gabagool - marchés liquides court terme)
     # ═══════════════════════════════════════════════════════════════
-    min_volume_usd: float = 100.0      # Volume minimum 100$ (très bas - seul pair_cost compte)
-    min_depth_usd: float = 50.0        # Profondeur carnet min 50$ (évite fake liquidity)
-    max_duration_hours: int = 168      # 7 jours max (élargi pour voir plus)
+    min_volume_usd: float = 500.0      # Volume minimum 500$ (liquidité suffisante)
+    min_depth_usd: float = 100.0       # Profondeur carnet min 100$ (évite slippage)
+    max_duration_hours: int = 4        # 4h max (focus court terme comme Gabagool original)
 
     # ═══════════════════════════════════════════════════════════════
     # PARAMÈTRES DE CAPITAL (Gabagool)
@@ -60,8 +61,8 @@ class TradingParams:
     position_timeout_seconds: int = 0   # 0 = pas de fermeture auto (attendre résolution)
     min_time_between_trades: float = 0.2  # 200ms entre trades (HFT speed)
     
-    # 6.1: Risk Management - Seuil de slippage (suggestion)
-    max_pair_cost_slippage_check: float = 0.995 # Coût max YES+NO avant d'annuler le trade (suggestion)
+    # 6.1: Risk Management - Seuil de slippage (aligné Gabagool)
+    max_pair_cost_slippage_check: float = 0.980  # Annuler si slippage fait dépasser ce seuil
 
     # ═══════════════════════════════════════════════════════════════
     # ASSETS CIBLES (configurables)
