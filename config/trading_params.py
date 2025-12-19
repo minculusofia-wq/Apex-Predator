@@ -24,15 +24,15 @@ class TradingParams:
     """
 
     # ═══════════════════════════════════════════════════════════════
-    # PARAMÈTRES DE SPREAD (Optimisés HFT - Agressif)
+    # PARAMÈTRES DE SPREAD (Relaxés pour voir plus de marchés)
     # ═══════════════════════════════════════════════════════════════
-    min_spread: float = 0.04      # Spread optimal HFT (4 cents = plus d'opportunités)
-    max_spread: float = 0.20      # Spread max réduit (évite marchés trop illiquides)
+    min_spread: float = 0.01      # Spread minimum 1 cent (voir tous les marchés)
+    max_spread: float = 0.50      # Spread max 50 cents (élargi)
 
     # ═══════════════════════════════════════════════════════════════
     # PARAMÈTRES DE VOLUME (Ajustés pour voir plus d'opportunités)
     # ═══════════════════════════════════════════════════════════════
-    min_volume_usd: float = 5000.0     # Volume minimum 5k$ (plus de marchés visibles)
+    min_volume_usd: float = 500.0      # Volume minimum 500$ (voir tous les marchés actifs)
     min_depth_usd: float = 50.0        # Profondeur carnet min 50$ (évite fake liquidity)
     max_duration_hours: int = 168      # 7 jours max (élargi pour voir plus)
 
