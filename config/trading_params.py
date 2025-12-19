@@ -24,15 +24,21 @@ class TradingParams:
     """
 
     # ═══════════════════════════════════════════════════════════════
-    # PARAMÈTRES DE SPREAD (Relaxés pour voir plus de marchés)
+    # PARAMÈTRES GABAGOOL (Critère principal: pair_cost < 1.00)
     # ═══════════════════════════════════════════════════════════════
-    min_spread: float = 0.01      # Spread minimum 1 cent (voir tous les marchés)
-    max_spread: float = 0.50      # Spread max 50 cents (élargi)
+    max_pair_cost: float = 0.995  # Coût max YES+NO pour afficher une opportunité (< 1.0 = profit)
+    min_profit_margin: float = 0.005  # Marge de profit minimum (1.0 - pair_cost)
 
     # ═══════════════════════════════════════════════════════════════
-    # PARAMÈTRES DE VOLUME (Ajustés pour voir plus d'opportunités)
+    # PARAMÈTRES DE SPREAD (Secondaires pour Gabagool)
     # ═══════════════════════════════════════════════════════════════
-    min_volume_usd: float = 500.0      # Volume minimum 500$ (voir tous les marchés actifs)
+    min_spread: float = 0.00      # Spread minimum désactivé (Gabagool n'utilise pas le spread)
+    max_spread: float = 1.00      # Spread max désactivé
+
+    # ═══════════════════════════════════════════════════════════════
+    # PARAMÈTRES DE VOLUME (Secondaires pour Gabagool)
+    # ═══════════════════════════════════════════════════════════════
+    min_volume_usd: float = 100.0      # Volume minimum 100$ (très bas - seul pair_cost compte)
     min_depth_usd: float = 50.0        # Profondeur carnet min 50$ (évite fake liquidity)
     max_duration_hours: int = 168      # 7 jours max (élargi pour voir plus)
 

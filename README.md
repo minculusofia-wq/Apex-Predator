@@ -1,4 +1,4 @@
-# Bot HFT PolyScalper - Crypto Edition (v4.4)
+# Bot HFT PolyScalper - Crypto Edition (v4.5)
 
 Bot de trading haute fréquence (HFT) pour scalper les marchés crypto court terme sur Polymarket.
 Optimisé pour la **vitesse d'exécution**, la **gestion du risque** et l'**automatisation intelligente**.
@@ -34,6 +34,12 @@ Optimisations de latence pour trading haute fréquence:
 | **Event-driven Triggers** | 20-50ms | Réaction instantanée aux updates WebSocket |
 | **Local Orderbook** | ~100ms | Miroir O(log n) avec SortedDict |
 | **Speculative Engine** | 3-5ms | Pré-calcul des ordres pour top opportunités |
+
+### 🔧 Correctifs v4.5 (Gabagool Optimized)
+- **Filtrage Gabagool** : Scanner filtre sur `pair_cost < 0.995` (profit garanti uniquement)
+- **Scoring profit_margin** : Score basé sur marge de profit (40 points max)
+- **Nouveaux paramètres** : `max_pair_cost`, `min_profit_margin` dans trading_params
+- **Logs améliorés** : Affiche stats de filtrage Gabagool (pair_cost_high, etc.)
 
 ### 🔧 Correctifs v4.4 (Production Ready)
 - **ApiCreds Fix** : Correction du bug py-clob-client avec credentials (était dict, maintenant ApiCreds)
@@ -106,9 +112,9 @@ cp .env.example .env
 
 | Paramètre | Défaut | Description |
 |-----------|--------|-------------|
-| `min_spread` | 0.04 | Spread minimum pour trader (4 cents) |
-| `max_spread` | 0.20 | Spread maximum acceptable |
-| `min_volume_usd` | 20000 | Volume minimum du marché |
+| `max_pair_cost` | 0.995 | **GABAGOOL** Coût max YES+NO (< 1.0 = profit) |
+| `min_profit_margin` | 0.005 | **GABAGOOL** Marge profit minimum (0.5%) |
+| `min_volume_usd` | 100 | Volume minimum du marché |
 | `capital_per_trade` | 25 | $ par trade |
 | `max_open_positions` | 15 | Positions simultanées max |
 | `order_offset` | 0.003 | Décalage prix (agressivité) |

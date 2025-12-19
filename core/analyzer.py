@@ -83,6 +83,10 @@ class Opportunity:
     obi_yes: float = 0.0
     obi_no: float = 0.0
 
+    # Gabagool: Pair Cost (YES ask + NO ask)
+    pair_cost: float = 2.0  # Coût pour acheter YES + NO (< 1.0 = profit possible)
+    profit_margin: float = 0.0  # 1.0 - pair_cost (marge de profit)
+
     score_breakdown: dict = field(default_factory=dict)
     
     # Action
@@ -120,6 +124,11 @@ class Opportunity:
             "score": self.score,
             "action": self.action.value,
             "detected_at": self.detected_at.isoformat(),
+            # Gabagool metrics
+            "pair_cost": self.pair_cost,
+            "profit_margin": self.profit_margin,
+            "best_ask_yes": self.best_ask_yes,
+            "best_ask_no": self.best_ask_no,
         }
 
 
@@ -148,48 +157,70 @@ class OpportunityAnalyzer:
     def analyze_market(self, market_data: MarketData, volatility_map: dict = None) -> Optional[Opportunity]:
         """
         Analyse un marché et retourne une opportunité si valide.
-        
+
+        CRITÈRE PRINCIPAL (Gabagool): pair_cost < max_pair_cost
+        pair_cost = best_ask_yes + best_ask_no
+        Si pair_cost < 1.00 → profit garanti possible
+
         Args:
             market_data: Données du marché
             volatility_map: Map optionnelle {asset_symbol: volatility_score}
-            
+
         Returns:
             Opportunity si les critères sont remplis, None sinon
         """
         # Vérifier que les données sont valides
         if not market_data.is_valid:
             return None
-        
+
         market = market_data.market
-        
-        # Vérifier le spread minimum
+
+        # ═══════════════════════════════════════════════════════════════
+        # CRITÈRE GABAGOOL PRINCIPAL: pair_cost < max_pair_cost
+        # ═══════════════════════════════════════════════════════════════
+        best_ask_yes = market_data.best_ask_yes or 0
+        best_ask_no = market_data.best_ask_no or 0
+
+        # Vérifier que les asks sont disponibles
+        if best_ask_yes <= 0 or best_ask_no <= 0:
+            return None
+
+        # Calculer le pair_cost (coût pour acheter YES + NO)
+        pair_cost = best_ask_yes + best_ask_no
+        profit_margin = 1.0 - pair_cost
+
+        # FILTRE PRINCIPAL: Si pair_cost >= max_pair_cost → pas de profit possible
+        if pair_cost >= self._params.max_pair_cost:
+            return None
+
+        # Vérifier la marge de profit minimum
+        if profit_margin < self._params.min_profit_margin:
+            return None
+
+        # ═══════════════════════════════════════════════════════════════
+        # FILTRES SECONDAIRES (optionnels)
+        # ═══════════════════════════════════════════════════════════════
         spread_yes = market_data.spread_yes or 0
         spread_no = market_data.spread_no or 0
         effective_spread = (spread_yes + spread_no) / 2
-        
-        if effective_spread < self._params.min_spread:
-            return None
-        
-        if effective_spread > self._params.max_spread:
-            return None
-        
-        # Vérifier le volume minimum
+
+        # Volume minimum (garde un seuil bas pour liquidité)
         if market.volume < self._params.min_volume_usd:
             return None
-            
+
         # Vérifier la durée (Short-term focus)
         duration_hours = market.hours_until_end
         if duration_hours > self._params.max_duration_hours:
             return None
-            
+
         # Exclure les marchés sans fin définie ou trop lointains
         if duration_hours <= 0 and not market.end_date:
              return None
-        
+
         # Calculer les prix recommandés (off-best)
         recommended_yes = (market_data.best_bid_yes or 0) + self._params.order_offset
         recommended_no = (market_data.best_bid_no or 0) + self._params.order_offset
-        
+
         # S'assurer que les prix sont valides (entre 0.01 et 0.99)
         recommended_yes = max(0.01, min(0.99, recommended_yes))
         recommended_no = max(0.01, min(0.99, recommended_no))
@@ -215,9 +246,9 @@ class OpportunityAnalyzer:
             token_yes_id=market.token_yes_id,
             token_no_id=market.token_no_id,
             best_bid_yes=market_data.best_bid_yes or 0,
-            best_ask_yes=market_data.best_ask_yes or 0,
+            best_ask_yes=best_ask_yes,
             best_bid_no=market_data.best_bid_no or 0,
-            best_ask_no=market_data.best_ask_no or 0,
+            best_ask_no=best_ask_no,
             spread_yes=spread_yes,
             spread_no=spread_no,
             recommended_price_yes=recommended_yes,
@@ -226,6 +257,8 @@ class OpportunityAnalyzer:
             liquidity=market.liquidity,
             obi_yes=breakdown.get("obi_yes", 0.0),
             obi_no=breakdown.get("obi_no", 0.0),
+            pair_cost=pair_cost,
+            profit_margin=profit_margin,
             score=score,
             score_breakdown=breakdown,
             action=action,
@@ -240,34 +273,45 @@ class OpportunityAnalyzer:
         volatility_map: dict = None
     ) -> tuple[int, dict]:
         """
-        Calcule le score d'une opportunité.
-        
-        Critères:
-        1. Spread (plus élevé = mieux)
-        2. Volume (plus élevé = mieux)
-        3. Liquidité (plus élevé = mieux)
-        4. Équilibre des prix (proche de 50/50 = mieux)
-        5. [NEW] Depth Analysis & Fees
-        
+        Calcule le score d'une opportunité (Optimisé Gabagool).
+
+        Critères prioritaires:
+        1. PROFIT MARGIN (pair_cost < 1.0) - CRITIQUE
+        2. Durée (court terme = mieux)
+        3. Volume et Liquidité
+        4. Équilibre des prix
+
         Returns:
             Tuple (score 1-5, breakdown)
         """
         breakdown = {}
         total_points = 0
         max_points = 0
-        
-        # --- 6.2: Fee Analysis & Profitability Check ---
-        # Estimer les fees (2% taker/spread risk)
-        # Si le spread est trop faible pour couvrir les fees, score = 0
-        ESTIMATED_FEE_PCT = 0.02
-        potential_profit = effective_spread * 0.5
-        
-        if potential_profit <= ESTIMATED_FEE_PCT:
-             # Margin trop faible pour couvrir les fees
-             breakdown["profitability"] = "negative_after_fees"
-             return 1, breakdown
-             
-        breakdown["net_profit_est"] = potential_profit - ESTIMATED_FEE_PCT
+
+        # ═══════════════════════════════════════════════════════════════
+        # GABAGOOL: Score profit_margin (0-40 points) - LE PLUS IMPORTANT
+        # ═══════════════════════════════════════════════════════════════
+        best_ask_yes = market_data.best_ask_yes or 0
+        best_ask_no = market_data.best_ask_no or 0
+        pair_cost = best_ask_yes + best_ask_no
+        profit_margin = 1.0 - pair_cost
+
+        max_points += 40
+        if profit_margin >= 0.03:  # 3%+ profit margin = excellent
+            margin_points = 40
+        elif profit_margin >= 0.02:  # 2%+ = très bon
+            margin_points = 35
+        elif profit_margin >= 0.015:  # 1.5%+ = bon
+            margin_points = 30
+        elif profit_margin >= 0.01:  # 1%+ = acceptable
+            margin_points = 20
+        elif profit_margin >= 0.005:  # 0.5%+ = minimal
+            margin_points = 10
+        else:
+            margin_points = 0
+        total_points += margin_points
+        breakdown["profit_margin"] = margin_points
+        breakdown["pair_cost"] = round(pair_cost, 4)
         
         # --- 6.3: OBI (Orderbook Imbalance) Calculation ---
         # OBI = (Bids - Asks) / (Bids + Asks)
@@ -451,16 +495,22 @@ class OpportunityAnalyzer:
         volatility_map: dict = None
     ) -> list[Opportunity]:
         """
-        Analyse tous les marchés et retourne les opportunités.
+        Analyse tous les marchés et retourne les opportunités Gabagool.
 
         Args:
             markets: Dictionnaire de MarketData
 
         Returns:
-            Liste d'opportunités triées par score (desc)
+            Liste d'opportunités triées par profit_margin (desc)
         """
         opportunities = []
-        filtered_reasons = {"invalid": 0, "spread_low": 0, "spread_high": 0, "volume": 0, "duration": 0, "passed": 0}
+        filtered_reasons = {
+            "invalid": 0,
+            "pair_cost_high": 0,  # pair_cost >= max_pair_cost (pas de profit)
+            "volume": 0,
+            "duration": 0,
+            "passed": 0
+        }
 
         for market_data in markets.values():
             opportunity = self.analyze_market(market_data, volatility_map)
@@ -468,21 +518,34 @@ class OpportunityAnalyzer:
                 opportunities.append(opportunity)
                 filtered_reasons["passed"] += 1
             else:
-                # Track why filtered (for debugging)
+                # Track why filtered (Gabagool-focused)
                 if not market_data.is_valid:
                     filtered_reasons["invalid"] += 1
                 elif market_data.market.volume < self._params.min_volume_usd:
                     filtered_reasons["volume"] += 1
                 else:
-                    filtered_reasons["spread_low"] += 1
+                    # Calculer pair_cost pour diagnostic
+                    ask_yes = market_data.best_ask_yes or 0
+                    ask_no = market_data.best_ask_no or 0
+                    if ask_yes > 0 and ask_no > 0:
+                        pair_cost = ask_yes + ask_no
+                        if pair_cost >= self._params.max_pair_cost:
+                            filtered_reasons["pair_cost_high"] += 1
+                        else:
+                            filtered_reasons["duration"] += 1
+                    else:
+                        filtered_reasons["invalid"] += 1
 
-        # Log filtering stats periodically
+        # Log filtering stats
         total = len(markets)
-        if total > 0 and filtered_reasons["passed"] == 0:
-            print(f"⚠️ [Analyzer] 0/{total} opportunités - Filtres: vol<{self._params.min_volume_usd}$={filtered_reasons['volume']}, spread={filtered_reasons['spread_low']}, invalid={filtered_reasons['invalid']}")
+        if total > 0:
+            if filtered_reasons["passed"] == 0:
+                print(f"⚠️ [Analyzer] 0/{total} opportunités Gabagool - pair_cost>={self._params.max_pair_cost}={filtered_reasons['pair_cost_high']}, vol={filtered_reasons['volume']}, invalid={filtered_reasons['invalid']}")
+            elif filtered_reasons["passed"] > 0:
+                print(f"💰 [Analyzer] {filtered_reasons['passed']}/{total} marchés tradables (pair_cost < {self._params.max_pair_cost})")
 
-        # Trier par score décroissant
-        opportunities.sort(key=lambda x: (x.score, x.effective_spread), reverse=True)
+        # Trier par profit_margin décroissant (meilleur profit d'abord)
+        opportunities.sort(key=lambda x: (x.score, x.profit_margin), reverse=True)
 
         return opportunities
 
