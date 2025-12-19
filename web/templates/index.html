@@ -85,6 +85,57 @@
             box-shadow: 0 0 10px var(--accent-green);
         }
 
+        /* Config Dirty Indicator */
+        .btn-config-dirty {
+            background: linear-gradient(135deg, #f59e0b, #d97706) !important;
+            border-color: #d97706 !important;
+            animation: pulse-warning 1.5s ease-in-out infinite;
+        }
+
+        @keyframes pulse-warning {
+            0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.4); }
+            50% { transform: scale(1.02); box-shadow: 0 0 15px 3px rgba(245, 158, 11, 0.3); }
+        }
+
+        /* Toast Notifications */
+        .toast-container {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 9999;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .toast {
+            padding: 12px 20px;
+            border-radius: 8px;
+            color: white;
+            font-size: 0.9rem;
+            font-weight: 500;
+            animation: toast-in 0.3s ease-out;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        }
+
+        .toast-success {
+            background: linear-gradient(135deg, #10b981, #059669);
+        }
+
+        .toast-warning {
+            background: linear-gradient(135deg, #f59e0b, #d97706);
+        }
+
+        @keyframes toast-in {
+            from { opacity: 0; transform: translateX(100px); }
+            to { opacity: 1; transform: translateX(0); }
+        }
+
+        @keyframes toast-out {
+            from { opacity: 1; transform: translateX(0); }
+            to { opacity: 0; transform: translateX(100px); }
+        }
+
         /* Binance Ticker */
         .ticker-wrap {
             width: 100%;
@@ -366,6 +417,9 @@
 </head>
 
 <body>
+    <!-- Toast Container for Notifications -->
+    <div class="toast-container" id="toast-container"></div>
+
     <header class="header">
         <div class="logo">
             <span>🚀</span>
@@ -459,7 +513,7 @@
                         </div>
                     </div>
 
-                    <button class="btn btn-primary" onclick="saveConfig()"
+                    <button class="btn btn-primary" id="btn-apply-config" onclick="saveConfig()"
                         style="width: 100%; justify-content: center; margin-top: 0.5rem;">💾 Appliquer</button>
 
                     <div class="btn-group" style="display: flex; gap: 0.5rem; margin-top: 1rem;">
@@ -772,9 +826,66 @@
 
         // --- Config & Controls ---
 
+        // Track config changes
+        let configDirty = false;
+        let originalConfig = {};
+
+        function showToast(message, type = 'success') {
+            const container = document.getElementById('toast-container');
+            const toast = document.createElement('div');
+            toast.className = `toast toast-${type}`;
+            toast.textContent = message;
+            container.appendChild(toast);
+
+            // Auto-remove after 3 seconds
+            setTimeout(() => {
+                toast.style.animation = 'toast-out 0.3s ease-in forwards';
+                setTimeout(() => toast.remove(), 300);
+            }, 3000);
+        }
+
+        function updateApplyButton() {
+            const btn = document.getElementById('btn-apply-config');
+            if (!btn) return;
+
+            if (configDirty) {
+                btn.classList.add('btn-config-dirty');
+                btn.innerHTML = '⚠️ Appliquer les changements';
+            } else {
+                btn.classList.remove('btn-config-dirty');
+                btn.innerHTML = '💾 Appliquer';
+            }
+        }
+
+        function setupConfigListeners() {
+            // Liste des inputs de config à surveiller
+            const configInputs = [
+                'cfg-spread', 'cfg-volume', 'cfg-duration', 'cfg-capital',
+                'cfg-auto-trading', 'cfg-kelly-enable', 'cfg-kelly-min', 'cfg-kelly-max'
+            ];
+
+            configInputs.forEach(id => {
+                const input = document.getElementById(id);
+                if (input) {
+                    input.addEventListener('change', () => {
+                        configDirty = true;
+                        updateApplyButton();
+                    });
+                    input.addEventListener('input', () => {
+                        configDirty = true;
+                        updateApplyButton();
+                    });
+                }
+            });
+        }
+
         async function loadConfig() {
             const res = await fetch('/api/config');
             const data = await res.json();
+
+            // Store original values
+            originalConfig = { ...data };
+
             document.getElementById('cfg-spread').value = data.min_spread;
             document.getElementById('cfg-volume').value = data.min_volume;
             document.getElementById('cfg-duration').value = data.max_duration_hours;
@@ -787,6 +898,13 @@
             document.getElementById('cfg-kelly-enable').checked = data.enable_kelly_sizing || false;
             document.getElementById('cfg-kelly-min').value = data.kelly_min_bet || 5.0;
             document.getElementById('cfg-kelly-max').value = data.kelly_max_bet || 50.0;
+
+            // Reset dirty state after loading
+            configDirty = false;
+            updateApplyButton();
+
+            // Setup listeners after first load
+            setupConfigListeners();
         }
 
         async function saveConfig() {
@@ -805,8 +923,22 @@
                 kelly_min_bet: parseFloat(document.getElementById('cfg-kelly-min').value),
                 kelly_max_bet: parseFloat(document.getElementById('cfg-kelly-max').value)
             };
-            await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(config) });
-            log('💾 Config appliquée', 'var(--accent-blue)');
+
+            try {
+                await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(config) });
+
+                // Reset dirty state
+                configDirty = false;
+                originalConfig = { ...config };
+                updateApplyButton();
+
+                // Show success toast
+                showToast('Configuration appliquee au Scanner/Gabagool!', 'success');
+                log('💾 Config appliquée', 'var(--accent-green)');
+            } catch (e) {
+                showToast('Erreur: ' + e.message, 'warning');
+                log('❌ Erreur config: ' + e.message, 'var(--accent-red)');
+            }
         }
 
         async function startBot() {
