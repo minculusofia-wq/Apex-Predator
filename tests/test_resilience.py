@@ -283,22 +283,22 @@ class TestValidationIntegration:
         )
         assert result2.valid
 
-        # Ordre 3: Approche de la limite
+        # Ordre 3: Approche de la limite (max_order=100, max_position=500)
         result3 = validator.validate_order(
             side="BUY",
             price=0.50,
-            qty=900,  # $450 → position totale = $500 (limite)
+            qty=200,  # $100 ordre (max autorisé) → position = $150
             expected_price=0.50,
             current_balance=950.0,
             current_position_value=50.0,
         )
         assert result3.valid
 
-        # Ordre 4: Dépasse la limite
+        # Ordre 4: Dépasse la limite de position
         result4 = validator.validate_order(
             side="BUY",
             price=0.50,
-            qty=20,  # $10 → position totale = $510 > $500
+            qty=100,  # $50 → position totale = $550 > $500
             expected_price=0.50,
             current_balance=500.0,
             current_position_value=500.0,

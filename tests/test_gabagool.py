@@ -31,7 +31,7 @@ class TestPairCost:
         pair_cost = 0.97
         profit_per_dollar = 1.0 - pair_cost
 
-        assert profit_per_dollar == 0.03  # 3% brut
+        assert profit_per_dollar == pytest.approx(0.03, rel=1e-9)  # 3% brut
         assert profit_per_dollar > 0
 
     def test_pair_cost_unprofitable(self):
