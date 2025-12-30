@@ -33,7 +33,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from config import get_settings, get_trading_params, update_trading_params, TradingParams
-from core import MarketScanner, OpportunityAnalyzer, OrderManager, OrderExecutor, TradeManager, TradeSide, MarketMaker, MMConfig, GabagoolEngine, GabagoolConfig
+from core import MarketScanner, OpportunityAnalyzer, OrderManager, OrderExecutor, TradeManager, TradeSide, MarketMaker, MMConfig, GabagoolEngine, GabagoolConfig, SmartApeEngine, SmartApeConfig
 from core.scanner import ScannerState
 from core.lifecycle import get_health_checker, get_metrics_manager, get_graceful_shutdown, ComponentHealth
 from core.resilience import get_circuit_stats
@@ -56,6 +56,7 @@ executor: Optional[OrderExecutor] = None
 trade_manager: Optional[TradeManager] = None
 market_maker: Optional[MarketMaker] = None
 gabagool_engine: Optional[GabagoolEngine] = None
+smart_ape_engine: Optional[SmartApeEngine] = None
 auto_optimizer: Optional[AutoOptimizer] = None
 cg_client: Optional[CoinGeckoClient] = None
 binance_client: Optional[BinanceClient] = None
@@ -86,6 +87,10 @@ async def lifespan(app: FastAPI):
     if auto_optimizer:
         await auto_optimizer.stop()
         print("✓ Auto-Optimizer arrêté")
+
+    if smart_ape_engine:
+        await smart_ape_engine.stop()
+        print("✓ Smart Ape Engine arrêté")
 
     if gabagool_engine:
         await gabagool_engine.stop()
@@ -736,6 +741,342 @@ async def update_gabagool_config(
 
 
 # ═══════════════════════════════════════════════════════════════
+# SMART APE STRATEGY ENDPOINTS (v7.0)
+# ═══════════════════════════════════════════════════════════════
+
+@app.post("/api/smart-ape/start")
+async def start_smart_ape():
+    """Démarre la stratégie Smart Ape."""
+    global smart_ape_engine, scanner, executor
+
+    if not scanner or not is_running:
+        return {"success": False, "message": "Scanner non démarré. Lancez le scanner d'abord."}
+
+    if smart_ape_engine and smart_ape_engine.is_running:
+        return {"success": False, "message": "Smart Ape déjà en cours"}
+
+    try:
+        if not smart_ape_engine:
+            smart_ape_engine = SmartApeEngine(config=SmartApeConfig(), executor=executor)
+
+        await smart_ape_engine.start()
+
+        # Event-driven callback pour Smart Ape
+        async def on_smart_ape_opportunity(market_data):
+            """Callback pour marchés Bitcoin Up/Down."""
+            if not smart_ape_engine or not smart_ape_engine.is_running:
+                return
+
+            # Vérifier si c'est un marché Smart Ape
+            if not smart_ape_engine.is_target_market(market_data.market.question):
+                return
+
+            price_up = market_data.best_ask_yes or 0
+            price_down = market_data.best_ask_no or 0
+            if price_up <= 0 or price_down <= 0:
+                return
+
+            try:
+                action, size_usd = await smart_ape_engine.analyze_opportunity(
+                    market_id=market_data.market.id,
+                    token_up_id=market_data.market.token_yes_id,
+                    token_down_id=market_data.market.token_no_id,
+                    price_up=price_up,
+                    price_down=price_down,
+                    question=market_data.market.question
+                )
+
+                if action == "buy_up" and price_up > 0:
+                    print(f"🦍 [SmartApe] BUY UP {market_data.market.question[:40]}... @ ${price_up:.3f}")
+                    await smart_ape_engine.buy_up(
+                        market_id=market_data.market.id,
+                        price=price_up,
+                        qty=size_usd / price_up
+                    )
+                elif action == "buy_down" and price_down > 0:
+                    print(f"🦍 [SmartApe] BUY DOWN {market_data.market.question[:40]}... @ ${price_down:.3f}")
+                    await smart_ape_engine.buy_down(
+                        market_id=market_data.market.id,
+                        price=price_down,
+                        qty=size_usd / price_down
+                    )
+            except Exception as e:
+                print(f"⚠️ [SmartApe] Erreur: {e}")
+
+        # Sauvegarder l'ancien callback et créer un wrapper
+        old_callback = scanner.on_immediate_analysis
+
+        async def combined_callback(market_data):
+            """Appelle les deux callbacks (Gabagool + Smart Ape)."""
+            if old_callback:
+                await old_callback(market_data)
+            await on_smart_ape_opportunity(market_data)
+
+        scanner.on_immediate_analysis = combined_callback
+        print("🦍 [SmartApe] Event-driven callback connecté au scanner")
+
+        return {"success": True, "message": "Smart Ape démarré"}
+
+    except Exception as e:
+        return {"success": False, "message": str(e)}
+
+
+@app.post("/api/smart-ape/stop")
+async def stop_smart_ape():
+    """Arrête la stratégie Smart Ape."""
+    global smart_ape_engine
+
+    if not smart_ape_engine:
+        return {"success": False, "message": "Smart Ape non initialisé"}
+
+    await smart_ape_engine.stop()
+    return {"success": True, "message": "Smart Ape arrêté"}
+
+
+@app.get("/api/smart-ape/status")
+async def get_smart_ape_status():
+    """Retourne le statut et les stats de Smart Ape."""
+    global smart_ape_engine
+
+    if not smart_ape_engine:
+        return {
+            "status": "stopped",
+            "is_running": False,
+            "stats": {},
+            "positions": []
+        }
+
+    return {
+        "status": smart_ape_engine.status.value,
+        "is_running": smart_ape_engine.is_running,
+        "stats": smart_ape_engine.get_stats(),
+        "positions": smart_ape_engine.get_positions_summary()
+    }
+
+
+@app.get("/api/smart-ape/positions")
+async def get_smart_ape_positions():
+    """Retourne toutes les positions Smart Ape."""
+    global smart_ape_engine
+
+    if not smart_ape_engine:
+        return {"positions": []}
+
+    return {
+        "positions": smart_ape_engine.get_positions_summary()
+    }
+
+
+@app.post("/api/smart-ape/config")
+async def update_smart_ape_config(
+    window_minutes: int = 2,
+    dump_threshold: float = 0.15,
+    min_payout_ratio: float = 1.5,
+    order_size_usd: float = 25.0,
+    max_position_usd: float = 200.0
+):
+    """Met à jour la configuration Smart Ape."""
+    global smart_ape_engine, executor
+
+    if not smart_ape_engine:
+        smart_ape_engine = SmartApeEngine(config=SmartApeConfig(), executor=executor)
+
+    smart_ape_engine.config.window_minutes = window_minutes
+    smart_ape_engine.config.dump_threshold = dump_threshold
+    smart_ape_engine.config.min_payout_ratio = min_payout_ratio
+    smart_ape_engine.config.order_size_usd = order_size_usd
+    smart_ape_engine.config.max_position_usd = max_position_usd
+
+    return {
+        "success": True,
+        "message": "Configuration Smart Ape mise à jour",
+        "config": {
+            "window_minutes": window_minutes,
+            "dump_threshold": dump_threshold,
+            "min_payout_ratio": min_payout_ratio,
+            "order_size_usd": order_size_usd,
+            "max_position_usd": max_position_usd
+        }
+    }
+
+
+# ═══════════════════════════════════════════════════════════════
+# STRATEGY MODE ENDPOINT (v7.0)
+# ═══════════════════════════════════════════════════════════════
+
+class StrategyModeUpdate(BaseModel):
+    mode: str  # "gabagool", "smart_ape", "both"
+
+
+@app.post("/api/strategy/mode")
+async def set_strategy_mode(update: StrategyModeUpdate):
+    """Change le mode de stratégie."""
+    global gabagool_engine, smart_ape_engine
+
+    valid_modes = ["gabagool", "smart_ape", "both"]
+    if update.mode not in valid_modes:
+        return {"success": False, "message": f"Mode invalide. Utilisez: {valid_modes}"}
+
+    # Mettre à jour dans trading_params
+    params = get_trading_params()
+    params.strategy_mode = update.mode
+    update_trading_params(params)
+
+    return {
+        "success": True,
+        "message": f"Mode stratégie changé: {update.mode}",
+        "mode": update.mode
+    }
+
+
+@app.get("/api/strategy/mode")
+async def get_strategy_mode():
+    """Retourne le mode de stratégie actuel."""
+    params = get_trading_params()
+    return {
+        "mode": params.strategy_mode,
+        "gabagool_running": gabagool_engine.is_running if gabagool_engine else False,
+        "smart_ape_running": smart_ape_engine.is_running if smart_ape_engine else False
+    }
+
+
+# ═══════════════════════════════════════════════════════════════
+# CAPITAL MANAGEMENT ENDPOINTS (v7.1)
+# ═══════════════════════════════════════════════════════════════
+
+class CapitalConfigUpdate(BaseModel):
+    gabagool_capital_usd: float = 500.0
+    gabagool_trade_percent: float = 5.0
+    smart_ape_capital_usd: float = 300.0
+    smart_ape_trade_percent: float = 8.0
+
+
+@app.post("/api/capital/config")
+async def update_capital_config(config: CapitalConfigUpdate):
+    """Met à jour la configuration du capital par stratégie."""
+    params = get_trading_params()
+
+    # Validation
+    if config.gabagool_capital_usd < 50:
+        return {"success": False, "message": "Capital Gabagool minimum: $50"}
+    if config.smart_ape_capital_usd < 50:
+        return {"success": False, "message": "Capital Smart Ape minimum: $50"}
+    if not (1 <= config.gabagool_trade_percent <= 25):
+        return {"success": False, "message": "% par trade Gabagool: 1-25%"}
+    if not (1 <= config.smart_ape_trade_percent <= 25):
+        return {"success": False, "message": "% par trade Smart Ape: 1-25%"}
+
+    # Update params
+    params.gabagool_capital_usd = config.gabagool_capital_usd
+    params.gabagool_trade_percent = config.gabagool_trade_percent
+    params.smart_ape_capital_usd = config.smart_ape_capital_usd
+    params.smart_ape_trade_percent = config.smart_ape_trade_percent
+
+    update_trading_params(params)
+
+    return {
+        "success": True,
+        "message": "Capital configuré",
+        "gabagool_trade_size": params.get_gabagool_trade_size(),
+        "smart_ape_trade_size": params.get_smart_ape_trade_size()
+    }
+
+
+@app.get("/api/capital/config")
+async def get_capital_config():
+    """Retourne la configuration du capital par stratégie."""
+    params = get_trading_params()
+    return {
+        "gabagool_capital_usd": params.gabagool_capital_usd,
+        "gabagool_trade_percent": params.gabagool_trade_percent,
+        "gabagool_trade_size": params.get_gabagool_trade_size(),
+        "gabagool_max_positions": params.gabagool_max_positions,
+        "smart_ape_capital_usd": params.smart_ape_capital_usd,
+        "smart_ape_trade_percent": params.smart_ape_trade_percent,
+        "smart_ape_trade_size": params.get_smart_ape_trade_size(),
+        "smart_ape_max_positions": params.smart_ape_max_positions
+    }
+
+
+# ═══════════════════════════════════════════════════════════════
+# KELLY SIZING ENDPOINTS (v7.2)
+# ═══════════════════════════════════════════════════════════════
+
+class KellyConfigUpdate(BaseModel):
+    kelly_enabled_gabagool: Optional[bool] = None
+    kelly_enabled_smart_ape: Optional[bool] = None
+    kelly_fraction: Optional[float] = None
+    kelly_min_edge: Optional[float] = None
+    kelly_max_size_multiplier: Optional[float] = None
+
+
+@app.get("/api/kelly/status")
+async def get_kelly_status():
+    """Retourne le status complet du Kelly Sizer."""
+    from core.kelly import get_kelly_sizer
+    try:
+        sizer = get_kelly_sizer()
+        params = get_trading_params()
+        return {
+            "enabled_gabagool": params.kelly_enabled_gabagool,
+            "enabled_smart_ape": params.kelly_enabled_smart_ape,
+            **sizer.get_status()
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.post("/api/kelly/config")
+async def update_kelly_config(config: KellyConfigUpdate):
+    """Met à jour la configuration Kelly."""
+    from core.kelly import get_kelly_sizer, update_kelly_config as update_kelly
+
+    params = get_trading_params()
+
+    # Update trading params
+    if config.kelly_enabled_gabagool is not None:
+        params.kelly_enabled_gabagool = config.kelly_enabled_gabagool
+    if config.kelly_enabled_smart_ape is not None:
+        params.kelly_enabled_smart_ape = config.kelly_enabled_smart_ape
+    if config.kelly_fraction is not None:
+        params.kelly_fraction = config.kelly_fraction
+    if config.kelly_min_edge is not None:
+        params.kelly_min_edge = config.kelly_min_edge
+    if config.kelly_max_size_multiplier is not None:
+        params.kelly_max_size_multiplier = config.kelly_max_size_multiplier
+
+    update_trading_params(params)
+
+    # Update Kelly Sizer
+    update_kelly(
+        fraction=config.kelly_fraction,
+        min_edge=config.kelly_min_edge,
+        max_multiplier=config.kelly_max_size_multiplier
+    )
+
+    return {
+        "success": True,
+        "message": "Configuration Kelly mise à jour",
+        "gabagool": params.kelly_enabled_gabagool,
+        "smart_ape": params.kelly_enabled_smart_ape
+    }
+
+
+@app.get("/api/kelly/config")
+async def get_kelly_config():
+    """Retourne la configuration Kelly."""
+    params = get_trading_params()
+    return {
+        "kelly_enabled_gabagool": params.kelly_enabled_gabagool,
+        "kelly_enabled_smart_ape": params.kelly_enabled_smart_ape,
+        "kelly_fraction": params.kelly_fraction,
+        "kelly_min_edge": params.kelly_min_edge,
+        "kelly_max_size_multiplier": params.kelly_max_size_multiplier,
+        "kelly_lookback_trades": params.kelly_lookback_trades
+    }
+
+
+# ═══════════════════════════════════════════════════════════════
 # AUTO-OPTIMIZER ENDPOINTS
 # ═══════════════════════════════════════════════════════════════
 
@@ -746,7 +1087,7 @@ class OptimizerModeUpdate(BaseModel):
 @app.post("/api/optimizer/start")
 async def start_optimizer():
     """Démarre l'Auto-Optimizer."""
-    global auto_optimizer, scanner, gabagool_engine, executor
+    global auto_optimizer, scanner, gabagool_engine, smart_ape_engine, executor
 
     if not scanner or not is_running:
         return {"success": False, "message": "Scanner non démarré. Lancez le scanner d'abord."}
@@ -756,7 +1097,11 @@ async def start_optimizer():
 
     try:
         if not auto_optimizer:
-            auto_optimizer = AutoOptimizer(scanner=scanner, gabagool=gabagool_engine)
+            auto_optimizer = AutoOptimizer(
+                scanner=scanner,
+                gabagool=gabagool_engine,
+                smart_ape=smart_ape_engine
+            )
 
         await auto_optimizer.start()
         return {"success": True, "message": f"Auto-Optimizer démarré en mode {auto_optimizer.mode.value}"}

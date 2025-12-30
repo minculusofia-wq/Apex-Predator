@@ -467,6 +467,118 @@
                 </div>
             </div>
 
+            <!-- Strategy Mode Selector (v7.0) -->
+            <div class="panel" style="margin-bottom: 1rem;">
+                <div class="panel-header">🎯 Mode Stratégie</div>
+                <div class="panel-content">
+                    <select id="strategy-mode" style="width: 100%; padding: 0.5rem; background: var(--bg-primary); border: 1px solid var(--border-color); border-radius: 4px; color: var(--text-primary); font-size: 0.9rem; cursor: pointer;">
+                        <option value="gabagool">🦀 Gabagool seul</option>
+                        <option value="smart_ape">🦍 Smart Ape seul</option>
+                        <option value="both">🔥 Les deux stratégies</option>
+                    </select>
+                    <div style="margin-top: 0.5rem; font-size: 0.7rem; color: var(--text-secondary);">
+                        <div id="strategy-desc">Arbitrage YES+NO &lt; $1.00</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Capital Management (v7.1) -->
+            <div class="panel" style="margin-bottom: 1rem;">
+                <div class="panel-header">💰 Gestion Capital</div>
+                <div class="panel-content">
+                    <!-- Gabagool Capital -->
+                    <div style="margin-bottom: 0.75rem; padding-bottom: 0.75rem; border-bottom: 1px solid var(--border-color);">
+                        <div style="font-size: 0.75rem; font-weight: 600; color: var(--accent-green); margin-bottom: 0.5rem;">🦀 Gabagool</div>
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem;">
+                            <div class="config-group" style="margin-bottom: 0;">
+                                <label>Capital ($)</label>
+                                <input type="number" id="gabagool-capital" step="50" value="500" min="50">
+                            </div>
+                            <div class="config-group" style="margin-bottom: 0;">
+                                <label>% par Trade</label>
+                                <input type="number" id="gabagool-percent" step="1" value="5" min="1" max="25">
+                            </div>
+                        </div>
+                        <div style="font-size: 0.7rem; color: var(--text-secondary); margin-top: 0.25rem;">
+                            Trade: <span id="gabagool-trade-size" class="mono" style="color: var(--accent-blue);">$25.00</span>
+                        </div>
+                    </div>
+
+                    <!-- Smart Ape Capital -->
+                    <div>
+                        <div style="font-size: 0.75rem; font-weight: 600; color: var(--accent-purple); margin-bottom: 0.5rem;">🦍 Smart Ape</div>
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem;">
+                            <div class="config-group" style="margin-bottom: 0;">
+                                <label>Capital ($)</label>
+                                <input type="number" id="smart-ape-capital" step="50" value="300" min="50">
+                            </div>
+                            <div class="config-group" style="margin-bottom: 0;">
+                                <label>% par Trade</label>
+                                <input type="number" id="smart-ape-percent" step="1" value="8" min="1" max="25">
+                            </div>
+                        </div>
+                        <div style="font-size: 0.7rem; color: var(--text-secondary); margin-top: 0.25rem;">
+                            Trade: <span id="smart-ape-trade-size" class="mono" style="color: var(--accent-blue);">$24.00</span>
+                        </div>
+                    </div>
+
+                    <button class="btn btn-primary btn-sm" onclick="saveCapitalConfig()" style="width: 100%; justify-content: center; margin-top: 0.75rem;">💾 Sauvegarder Capital</button>
+                </div>
+            </div>
+
+            <!-- Kelly Sizing (v7.2) -->
+            <div class="panel" style="margin-bottom: 1rem;">
+                <div class="panel-header">📊 Kelly Sizing</div>
+                <div class="panel-content">
+                    <div style="font-size: 0.7rem; color: var(--text-secondary); margin-bottom: 0.75rem;">
+                        Dimensionnement optimal basé sur l'edge statistique
+                    </div>
+
+                    <!-- Per-strategy toggles -->
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; padding: 0.5rem; background: var(--bg-primary); border-radius: 4px;">
+                        <label style="margin:0; font-size: 0.8rem; color: var(--accent-green);">🦀 Gabagool</label>
+                        <input type="checkbox" id="kelly-gabagool" onchange="saveKellyConfig()">
+                    </div>
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; padding: 0.5rem; background: var(--bg-primary); border-radius: 4px;">
+                        <label style="margin:0; font-size: 0.8rem; color: var(--accent-purple);">🦍 Smart Ape</label>
+                        <input type="checkbox" id="kelly-smart-ape" onchange="saveKellyConfig()">
+                    </div>
+
+                    <!-- Kelly parameters -->
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; margin-bottom: 0.5rem;">
+                        <div class="config-group" style="margin-bottom: 0;">
+                            <label>Fraction</label>
+                            <select id="kelly-fraction" onchange="saveKellyConfig()" style="width: 100%; padding: 0.4rem; background: var(--bg-primary); border: 1px solid var(--border-color); border-radius: 4px; color: var(--text-primary);">
+                                <option value="0.125">1/8 Kelly</option>
+                                <option value="0.25" selected>1/4 Kelly</option>
+                                <option value="0.5">1/2 Kelly</option>
+                                <option value="1.0">Full Kelly</option>
+                            </select>
+                        </div>
+                        <div class="config-group" style="margin-bottom: 0;">
+                            <label>Max Multi</label>
+                            <input type="number" id="kelly-max-multi" step="0.5" value="2.0" min="1" max="5" onchange="saveKellyConfig()">
+                        </div>
+                    </div>
+
+                    <!-- Kelly stats display -->
+                    <div style="font-size: 0.75rem; padding: 0.5rem; background: var(--bg-primary); border-radius: 4px;">
+                        <div style="display: flex; justify-content: space-between; margin-bottom: 0.25rem;">
+                            <span style="color: var(--text-secondary);">Win Rate Gabagool</span>
+                            <span id="kelly-winrate-gabagool" class="mono">--</span>
+                        </div>
+                        <div style="display: flex; justify-content: space-between; margin-bottom: 0.25rem;">
+                            <span style="color: var(--text-secondary);">Win Rate Smart Ape</span>
+                            <span id="kelly-winrate-smartape" class="mono">--</span>
+                        </div>
+                        <div style="display: flex; justify-content: space-between;">
+                            <span style="color: var(--text-secondary);">Trades analysés</span>
+                            <span id="kelly-trades" class="mono">0</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <!-- Config -->
             <div class="panel" style="margin-bottom: 1rem;">
                 <div class="panel-header">⚙️ Paramètres HFT</div>
@@ -579,6 +691,63 @@
                         <button class="btn btn-success btn-sm" id="btn-optimizer-start" onclick="startOptimizer()"
                             style="flex: 1; justify-content: center;">▶ Start</button>
                         <button class="btn btn-danger btn-sm" id="btn-optimizer-stop" onclick="stopOptimizer()"
+                            style="flex: 1; justify-content: center;" disabled>⏹ Stop</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Smart Ape Panel (v7.0) -->
+            <div class="panel" id="smart-ape-panel" style="margin-bottom: 1rem;">
+                <div class="panel-header">
+                    🦍 Smart Ape
+                    <span id="smart-ape-status" style="font-size: 0.75rem; opacity: 0.7;">OFF</span>
+                </div>
+                <div class="panel-content">
+                    <div style="font-size: 0.7rem; color: var(--text-secondary); margin-bottom: 0.75rem;">
+                        Bitcoin Up/Down 15min - Asymétrique
+                    </div>
+
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; margin-bottom: 0.75rem;">
+                        <div class="config-group" style="margin-bottom: 0;">
+                            <label>Fenêtre (min)</label>
+                            <input type="number" id="smart-ape-window" step="1" value="2" min="1" max="5">
+                        </div>
+                        <div class="config-group" style="margin-bottom: 0;">
+                            <label>Dump Seuil (%)</label>
+                            <input type="number" id="smart-ape-dump" step="0.01" value="0.15" min="0.05" max="0.50">
+                        </div>
+                    </div>
+
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; margin-bottom: 0.75rem;">
+                        <div class="config-group" style="margin-bottom: 0;">
+                            <label>Payout Min</label>
+                            <input type="number" id="smart-ape-payout" step="0.1" value="1.5" min="1.0" max="3.0">
+                        </div>
+                        <div class="config-group" style="margin-bottom: 0;">
+                            <label>Ordre ($)</label>
+                            <input type="number" id="smart-ape-size" step="5" value="25" min="5" max="100">
+                        </div>
+                    </div>
+
+                    <div style="font-size: 0.75rem; padding: 0.5rem; background: var(--bg-primary); border-radius: 4px; margin-bottom: 0.75rem;">
+                        <div style="display: flex; justify-content: space-between; margin-bottom: 0.25rem;">
+                            <span style="color: var(--text-secondary);">Positions</span>
+                            <span id="smart-ape-positions" class="mono">0</span>
+                        </div>
+                        <div style="display: flex; justify-content: space-between; margin-bottom: 0.25rem;">
+                            <span style="color: var(--text-secondary);">P&L</span>
+                            <span id="smart-ape-pnl" class="mono" style="color: var(--accent-green);">$0.00</span>
+                        </div>
+                        <div style="display: flex; justify-content: space-between;">
+                            <span style="color: var(--text-secondary);">Trades</span>
+                            <span id="smart-ape-trades" class="mono">0</span>
+                        </div>
+                    </div>
+
+                    <div class="btn-group" style="display: flex; gap: 0.5rem;">
+                        <button class="btn btn-success btn-sm" id="btn-smart-ape-start" onclick="startSmartApe()"
+                            style="flex: 1; justify-content: center;">▶ Start</button>
+                        <button class="btn btn-danger btn-sm" id="btn-smart-ape-stop" onclick="stopSmartApe()"
                             style="flex: 1; justify-content: center;" disabled>⏹ Stop</button>
                     </div>
                 </div>
@@ -1074,7 +1243,7 @@
             }
         }
 
-        // Handle mode change
+        // Handle optimizer mode change
         document.getElementById('optimizer-mode').addEventListener('change', async (e) => {
             try {
                 const res = await fetch('/api/optimizer/mode', {
@@ -1089,6 +1258,299 @@
             } catch (err) {
                 console.error('Mode change error:', err);
             }
+        });
+
+        // ═══════════════════════════════════════════════════════════════
+        // SMART APE & STRATEGY MODE FUNCTIONS (v7.0)
+        // ═══════════════════════════════════════════════════════════════
+
+        const strategyDescriptions = {
+            'gabagool': 'Arbitrage YES+NO < $1.00 - Marchés crypto court terme',
+            'smart_ape': 'Bitcoin Up/Down 15min - Positions asymétriques',
+            'both': 'Gabagool + Smart Ape simultanément'
+        };
+
+        // Handle strategy mode change
+        document.getElementById('strategy-mode').addEventListener('change', async (e) => {
+            const mode = e.target.value;
+            try {
+                const res = await fetch('/api/strategy/mode', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ mode: mode })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    document.getElementById('strategy-desc').innerText = strategyDescriptions[mode];
+                    log(`🎯 Stratégie: ${mode}`, 'var(--accent-blue)');
+                    showToast(`Stratégie changée: ${mode}`, 'success');
+                }
+            } catch (err) {
+                console.error('Strategy mode change error:', err);
+                log(`❌ Erreur changement stratégie`, 'var(--accent-red)');
+            }
+        });
+
+        // Smart Ape Start
+        async function startSmartApe() {
+            try {
+                // Update config first
+                await updateSmartApeConfig();
+
+                const res = await fetch('/api/smart-ape/start', { method: 'POST' });
+                const data = await res.json();
+                if (data.success) {
+                    log('🦍 Smart Ape démarré', 'var(--accent-green)');
+                    setSmartApeRunning(true);
+                    showToast('Smart Ape activé!', 'success');
+                } else {
+                    log(`❌ Smart Ape: ${data.message}`, 'var(--accent-red)');
+                }
+            } catch (e) {
+                log(`❌ Erreur Smart Ape: ${e.message}`, 'var(--accent-red)');
+            }
+        }
+
+        // Smart Ape Stop
+        async function stopSmartApe() {
+            try {
+                const res = await fetch('/api/smart-ape/stop', { method: 'POST' });
+                const data = await res.json();
+                if (data.success) {
+                    log('🦍 Smart Ape arrêté', 'var(--accent-yellow)');
+                    setSmartApeRunning(false);
+                }
+            } catch (e) {
+                log(`❌ Erreur: ${e.message}`, 'var(--accent-red)');
+            }
+        }
+
+        // Update Smart Ape config
+        async function updateSmartApeConfig() {
+            const config = {
+                window_minutes: parseInt(document.getElementById('smart-ape-window').value),
+                dump_threshold: parseFloat(document.getElementById('smart-ape-dump').value),
+                min_payout_ratio: parseFloat(document.getElementById('smart-ape-payout').value),
+                order_size_usd: parseFloat(document.getElementById('smart-ape-size').value),
+                max_position_usd: 200.0
+            };
+            try {
+                await fetch('/api/smart-ape/config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(config)
+                });
+            } catch (e) {
+                console.error('Smart Ape config error:', e);
+            }
+        }
+
+        // Set Smart Ape running state
+        function setSmartApeRunning(running) {
+            document.getElementById('smart-ape-status').innerText = running ? 'ON' : 'OFF';
+            document.getElementById('smart-ape-status').style.color = running ? 'var(--accent-green)' : '';
+            document.getElementById('btn-smart-ape-start').disabled = running;
+            document.getElementById('btn-smart-ape-stop').disabled = !running;
+        }
+
+        // Update Smart Ape UI from WebSocket data
+        function updateSmartApeUI(data) {
+            if (!data) return;
+
+            setSmartApeRunning(data.is_running);
+
+            if (data.stats) {
+                document.getElementById('smart-ape-positions').innerText = data.stats.active_positions || 0;
+                const pnl = data.stats.total_pnl || 0;
+                const pnlEl = document.getElementById('smart-ape-pnl');
+                pnlEl.innerText = `$${pnl.toFixed(2)}`;
+                pnlEl.style.color = pnl >= 0 ? 'var(--accent-green)' : 'var(--accent-red)';
+                document.getElementById('smart-ape-trades').innerText = data.stats.total_trades || 0;
+            }
+        }
+
+        // Fetch Smart Ape status on load
+        async function fetchSmartApeStatus() {
+            try {
+                const res = await fetch('/api/smart-ape/status');
+                const data = await res.json();
+                updateSmartApeUI(data);
+            } catch (e) {
+                console.error('Smart Ape status error:', e);
+            }
+        }
+
+        // Fetch strategy mode on load
+        async function fetchStrategyMode() {
+            try {
+                const res = await fetch('/api/strategy/mode');
+                const data = await res.json();
+                if (data.mode) {
+                    document.getElementById('strategy-mode').value = data.mode;
+                    document.getElementById('strategy-desc').innerText = strategyDescriptions[data.mode];
+                }
+            } catch (e) {
+                console.error('Strategy mode fetch error:', e);
+            }
+        }
+
+        // Add to init
+        document.addEventListener('DOMContentLoaded', () => {
+            fetchSmartApeStatus();
+            fetchStrategyMode();
+            fetchCapitalConfig();
+            setupCapitalListeners();
+        });
+
+        // ═══════════════════════════════════════════════════════════════
+        // CAPITAL MANAGEMENT FUNCTIONS (v7.1)
+        // ═══════════════════════════════════════════════════════════════
+
+        // Update trade size display based on capital and percent
+        function updateTradeSizeDisplay() {
+            const gabagoolCapital = parseFloat(document.getElementById('gabagool-capital').value) || 500;
+            const gabagoolPercent = parseFloat(document.getElementById('gabagool-percent').value) || 5;
+            const gabagoolTradeSize = (gabagoolCapital * gabagoolPercent) / 100;
+            document.getElementById('gabagool-trade-size').innerText = `$${gabagoolTradeSize.toFixed(2)}`;
+
+            const smartApeCapital = parseFloat(document.getElementById('smart-ape-capital').value) || 300;
+            const smartApePercent = parseFloat(document.getElementById('smart-ape-percent').value) || 8;
+            const smartApeTradeSize = (smartApeCapital * smartApePercent) / 100;
+            document.getElementById('smart-ape-trade-size').innerText = `$${smartApeTradeSize.toFixed(2)}`;
+        }
+
+        // Setup listeners for capital inputs
+        function setupCapitalListeners() {
+            const inputs = ['gabagool-capital', 'gabagool-percent', 'smart-ape-capital', 'smart-ape-percent'];
+            inputs.forEach(id => {
+                const el = document.getElementById(id);
+                if (el) {
+                    el.addEventListener('input', updateTradeSizeDisplay);
+                    el.addEventListener('change', updateTradeSizeDisplay);
+                }
+            });
+        }
+
+        // Save capital configuration
+        async function saveCapitalConfig() {
+            const config = {
+                gabagool_capital_usd: parseFloat(document.getElementById('gabagool-capital').value),
+                gabagool_trade_percent: parseFloat(document.getElementById('gabagool-percent').value),
+                smart_ape_capital_usd: parseFloat(document.getElementById('smart-ape-capital').value),
+                smart_ape_trade_percent: parseFloat(document.getElementById('smart-ape-percent').value)
+            };
+
+            try {
+                const res = await fetch('/api/capital/config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(config)
+                });
+                const data = await res.json();
+                if (data.success) {
+                    showToast('Capital sauvegardé!', 'success');
+                    log(`💰 Capital: Gabagool $${config.gabagool_capital_usd} (${config.gabagool_trade_percent}%), Smart Ape $${config.smart_ape_capital_usd} (${config.smart_ape_trade_percent}%)`, 'var(--accent-blue)');
+                } else {
+                    showToast('Erreur: ' + data.message, 'warning');
+                }
+            } catch (e) {
+                log(`❌ Erreur capital: ${e.message}`, 'var(--accent-red)');
+            }
+        }
+
+        // Fetch capital configuration on load
+        async function fetchCapitalConfig() {
+            try {
+                const res = await fetch('/api/capital/config');
+                const data = await res.json();
+                if (data) {
+                    document.getElementById('gabagool-capital').value = data.gabagool_capital_usd || 500;
+                    document.getElementById('gabagool-percent').value = data.gabagool_trade_percent || 5;
+                    document.getElementById('smart-ape-capital').value = data.smart_ape_capital_usd || 300;
+                    document.getElementById('smart-ape-percent').value = data.smart_ape_trade_percent || 8;
+                    updateTradeSizeDisplay();
+                }
+            } catch (e) {
+                console.error('Capital config fetch error:', e);
+                updateTradeSizeDisplay(); // Use defaults
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════════════
+        // KELLY SIZING FUNCTIONS (v7.2)
+        // ═══════════════════════════════════════════════════════════════
+
+        // Save Kelly configuration
+        async function saveKellyConfig() {
+            const config = {
+                kelly_enabled_gabagool: document.getElementById('kelly-gabagool').checked,
+                kelly_enabled_smart_ape: document.getElementById('kelly-smart-ape').checked,
+                kelly_fraction: parseFloat(document.getElementById('kelly-fraction').value),
+                kelly_max_size_multiplier: parseFloat(document.getElementById('kelly-max-multi').value)
+            };
+
+            try {
+                const res = await fetch('/api/kelly/config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(config)
+                });
+                const data = await res.json();
+                if (data.success) {
+                    log(`📊 Kelly: Gabagool=${config.kelly_enabled_gabagool}, SmartApe=${config.kelly_enabled_smart_ape}, Fraction=${config.kelly_fraction}`, 'var(--accent-purple)');
+                }
+            } catch (e) {
+                console.error('Kelly config error:', e);
+            }
+        }
+
+        // Fetch Kelly configuration on load
+        async function fetchKellyConfig() {
+            try {
+                const res = await fetch('/api/kelly/config');
+                const data = await res.json();
+                if (data) {
+                    document.getElementById('kelly-gabagool').checked = data.kelly_enabled_gabagool || false;
+                    document.getElementById('kelly-smart-ape').checked = data.kelly_enabled_smart_ape || false;
+                    document.getElementById('kelly-fraction').value = data.kelly_fraction || 0.25;
+                    document.getElementById('kelly-max-multi').value = data.kelly_max_size_multiplier || 2.0;
+                }
+            } catch (e) {
+                console.error('Kelly config fetch error:', e);
+            }
+        }
+
+        // Fetch Kelly stats
+        async function fetchKellyStats() {
+            try {
+                const res = await fetch('/api/kelly/status');
+                const data = await res.json();
+                if (data && !data.error) {
+                    // Update win rates
+                    if (data.gabagool) {
+                        const wr = data.gabagool.win_rate || 0;
+                        document.getElementById('kelly-winrate-gabagool').innerText = `${(wr * 100).toFixed(1)}%`;
+                    }
+                    if (data.smart_ape) {
+                        const wr = data.smart_ape.win_rate || 0;
+                        document.getElementById('kelly-winrate-smartape').innerText = `${(wr * 100).toFixed(1)}%`;
+                    }
+                    // Update trade counts
+                    const totalTrades = (data.trade_counts?.gabagool || 0) + (data.trade_counts?.smart_ape || 0);
+                    document.getElementById('kelly-trades').innerText = totalTrades;
+                }
+            } catch (e) {
+                console.error('Kelly stats error:', e);
+            }
+        }
+
+        // Add Kelly to init
+        const originalDOMContentLoaded = document.addEventListener;
+        document.addEventListener('DOMContentLoaded', () => {
+            fetchKellyConfig();
+            fetchKellyStats();
+            // Refresh Kelly stats every 30 seconds
+            setInterval(fetchKellyStats, 30000);
         });
     </script>
 </body>

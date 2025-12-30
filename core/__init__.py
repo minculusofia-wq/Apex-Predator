@@ -8,6 +8,7 @@ from .order_manager import OrderManager
 from .trade_manager import TradeManager, Trade, TradeStatus, TradeSide, CloseReason
 from .market_maker import MarketMaker, MMConfig, MMPosition, MMStatus
 from .gabagool import GabagoolEngine, GabagoolConfig, GabagoolPosition, GabagoolStatus
+from .smart_ape import SmartApeEngine, SmartApeConfig, SmartApePosition, SmartApeStatus
 from .order_queue import (
     OrderQueue,
     QueuedOrder,
@@ -40,6 +41,10 @@ from .lifecycle import (
     get_metrics_manager, get_health_checker, get_graceful_shutdown,
     MetricsManager, HealthChecker, GracefulShutdown, ComponentHealth
 )
+from .kelly import (
+    KellySizer, KellyStats, Strategy as KellyStrategy,
+    get_kelly_sizer, update_kelly_config
+)
 
 __all__ = [
     "MarketScanner",
@@ -63,6 +68,11 @@ __all__ = [
     "GabagoolConfig",
     "GabagoolPosition",
     "GabagoolStatus",
+    # Smart Ape (v7.0)
+    "SmartApeEngine",
+    "SmartApeConfig",
+    "SmartApePosition",
+    "SmartApeStatus",
     # Order Queue (4.1)
     "OrderQueue",
     "QueuedOrder",
@@ -108,4 +118,10 @@ __all__ = [
     "HealthChecker",
     "GracefulShutdown",
     "ComponentHealth",
+    # Kelly Sizing (v7.2)
+    "KellySizer",
+    "KellyStats",
+    "KellyStrategy",
+    "get_kelly_sizer",
+    "update_kelly_config",
 ]

@@ -1,10 +1,14 @@
 """
-Auto-Optimizer - Optimisation Dynamique des Paramètres de Trading
+Auto-Optimizer v7.2 - Optimisation Dynamique Dual-Strategy
 
-Ajuste automatiquement les paramètres en temps réel basé sur:
-- Conditions de marché (spread, volume, liquidité)
-- État des positions (progress vers lock, équilibre YES/NO)
-- Volatilité externe (données Binance/CoinGecko)
+Ajuste automatiquement les paramètres en temps réel pour:
+- Gabagool: max_pair_cost, min_improvement selon spread/volume
+- Smart Ape: window_minutes, dump_threshold, payout_ratio selon volatilité BTC
+
+Sources de données:
+- Scanner Polymarket (spread, volume, liquidité)
+- CoinGecko (volatilité crypto globale)
+- Binance (prix BTC temps réel pour Smart Ape)
 
 Modes:
 - MANUAL: Paramètres fixes
@@ -13,14 +17,16 @@ Modes:
 """
 
 import asyncio
-from typing import Optional, Dict, List, TYPE_CHECKING
+import httpx
+from typing import Optional, Dict, List, TYPE_CHECKING, Tuple
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import Enum
 
 if TYPE_CHECKING:
     from core.scanner import Scanner, MarketData
-    from core.gabagool import GabagoolEngine, PairPosition
+    from core.gabagool import GabagoolEngine
+    from core.smart_ape import SmartApeEngine
     from api.public.coingecko_client import CoinGeckoClient
 
 
@@ -32,34 +38,70 @@ class OptimizerMode(Enum):
 
 
 @dataclass
+class BTCConditions:
+    """Conditions BTC temps réel pour Smart Ape."""
+    price: float = 0.0                    # Prix actuel BTC
+    price_1m_ago: float = 0.0             # Prix il y a 1 minute
+    price_5m_ago: float = 0.0             # Prix il y a 5 minutes
+    change_1m_pct: float = 0.0            # Variation 1 min en %
+    change_5m_pct: float = 0.0            # Variation 5 min en %
+    volatility_1m: float = 0.0            # Volatilité 1 min
+    momentum: str = "neutral"             # "up", "down", "neutral"
+    last_updated: datetime = field(default_factory=datetime.now)
+
+
+@dataclass
 class MarketConditions:
     """Snapshot des conditions de marché actuelles."""
+    # Polymarket general
     avg_spread: float = 0.10            # Spread moyen sur les marchés actifs
     avg_volume: float = 20000.0         # Volume moyen 24h
     avg_liquidity: float = 10000.0      # Liquidité moyenne
-    volatility_score: float = 50.0      # Score volatilité (0-100)
-    active_positions: int = 0           # Nombre de positions ouvertes
-    locked_positions: int = 0           # Positions avec profit verrouillé
-    avg_pair_cost: float = 1.0          # Pair cost moyen des positions actives
+    volatility_score: float = 50.0      # Score volatilité crypto (0-100)
     ws_connected: bool = False          # WebSocket actif
+
+    # Gabagool specific
+    gabagool_active_positions: int = 0
+    gabagool_locked_positions: int = 0
+    gabagool_avg_pair_cost: float = 1.0
+
+    # Smart Ape specific
+    smart_ape_active_rounds: int = 0
+    smart_ape_avg_payout: float = 1.5
+
+    # BTC (for Smart Ape)
+    btc: BTCConditions = field(default_factory=BTCConditions)
+
     timestamp: datetime = field(default_factory=datetime.now)
 
 
 @dataclass
-class OptimizedParams:
-    """Paramètres optimisés calculés."""
-    max_pair_cost: float = 0.98         # 0.90 - 0.99 selon conditions
-    min_improvement: float = 0.005      # 0.000 - 0.010 selon état position
-    first_buy_threshold: float = 0.55   # 0.45 - 0.65 selon spread
-    refresh_interval: float = 1.0       # 0.5 - 2.0s selon volatilité
+class GabagoolParams:
+    """Paramètres optimisés pour Gabagool."""
+    max_pair_cost: float = 0.975        # 0.95 - 0.985
+    min_improvement: float = 0.005      # 0.000 - 0.010
+    first_buy_threshold: float = 0.55   # 0.45 - 0.65
 
     def to_dict(self) -> dict:
-        """Convertit en dictionnaire."""
         return {
-            "max_pair_cost": round(self.max_pair_cost, 3),
+            "max_pair_cost": round(self.max_pair_cost, 4),
             "min_improvement": round(self.min_improvement, 4),
             "first_buy_threshold": round(self.first_buy_threshold, 3),
-            "refresh_interval": round(self.refresh_interval, 2),
+        }
+
+
+@dataclass
+class SmartApeParams:
+    """Paramètres optimisés pour Smart Ape."""
+    window_minutes: int = 2             # 1 - 4
+    dump_threshold: float = 0.15        # 0.10 - 0.25
+    min_payout_ratio: float = 1.5       # 1.3 - 2.0
+
+    def to_dict(self) -> dict:
+        return {
+            "window_minutes": self.window_minutes,
+            "dump_threshold": round(self.dump_threshold, 3),
+            "min_payout_ratio": round(self.min_payout_ratio, 2),
         }
 
 
@@ -67,6 +109,7 @@ class OptimizedParams:
 class OptimizationEvent:
     """Événement de modification de paramètres."""
     timestamp: datetime
+    strategy: str           # "gabagool" or "smart_ape"
     param_name: str
     old_value: float
     new_value: float
@@ -75,15 +118,14 @@ class OptimizationEvent:
 
 class AutoOptimizer:
     """
-    Moteur d'optimisation automatique des paramètres.
+    Moteur d'optimisation automatique dual-strategy.
 
-    Ajuste les paramètres en temps réel pour maximiser:
-    1. Le nombre d'opportunités détectées
-    2. La vitesse de convergence vers pair_cost < $1
-    3. Le profit verrouillé par position
+    Optimise séparément:
+    - Gabagool: basé sur spread, volume, pair_cost moyen
+    - Smart Ape: basé sur prix BTC, volatilité, momentum
 
     Usage:
-        optimizer = AutoOptimizer(scanner, gabagool)
+        optimizer = AutoOptimizer(scanner, gabagool, smart_ape)
         await optimizer.start()
     """
 
@@ -91,33 +133,41 @@ class AutoOptimizer:
         self,
         scanner: Optional["Scanner"] = None,
         gabagool: Optional["GabagoolEngine"] = None,
+        smart_ape: Optional["SmartApeEngine"] = None,
         mode: OptimizerMode = OptimizerMode.FULL_AUTO
     ):
         self.scanner = scanner
         self.gabagool = gabagool
+        self.smart_ape = smart_ape
         self.mode = mode
         self._enabled = True
         self._running = False
         self._task: Optional[asyncio.Task] = None
+
+        # Contrôle par stratégie
+        self._optimize_gabagool = True
+        self._optimize_smart_ape = True
 
         # Intervalle de mise à jour (secondes)
         self._update_interval = 5.0
 
         # État actuel
         self._conditions: Optional[MarketConditions] = None
-        self._current_params: OptimizedParams = OptimizedParams()
+        self._gabagool_params: GabagoolParams = GabagoolParams()
+        self._smart_ape_params: SmartApeParams = SmartApeParams()
         self._last_update: Optional[datetime] = None
+
+        # Historique BTC pour calcul momentum
+        self._btc_history: List[Tuple[datetime, float]] = []
 
         # Historique des modifications
         self._events: List[OptimizationEvent] = []
         self._total_adjustments = 0
 
-        # Paramètres de base (référence)
-        self._base_params = OptimizedParams()
-
-        # Client CoinGecko persistent (évite rate limit)
+        # Clients externes
         self._cg_client: Optional["CoinGeckoClient"] = None
         self._cg_client_initialized = False
+        self._http_client: Optional[httpx.AsyncClient] = None
 
         # Callbacks
         self.on_params_updated: Optional[callable] = None
@@ -139,8 +189,12 @@ class AutoOptimizer:
         return self._conditions
 
     @property
-    def current_params(self) -> OptimizedParams:
-        return self._current_params
+    def gabagool_params(self) -> GabagoolParams:
+        return self._gabagool_params
+
+    @property
+    def smart_ape_params(self) -> SmartApeParams:
+        return self._smart_ape_params
 
     @property
     def last_update(self) -> Optional[datetime]:
@@ -165,8 +219,9 @@ class AutoOptimizer:
             return
 
         self._running = True
+        self._http_client = httpx.AsyncClient(timeout=5.0)
         self._task = asyncio.create_task(self._optimization_loop())
-        print(f"🧠 [Optimizer] Démarré en mode {self.mode.value}")
+        print(f"🧠 [Optimizer] Démarré en mode {self.mode.value} (Gabagool={self._optimize_gabagool}, SmartApe={self._optimize_smart_ape})")
 
     async def stop(self) -> None:
         """Arrête la boucle d'optimisation."""
@@ -178,7 +233,7 @@ class AutoOptimizer:
             except asyncio.CancelledError:
                 pass
 
-        # Fermer le client CoinGecko
+        # Fermer les clients
         if self._cg_client:
             try:
                 await self._cg_client.__aexit__(None, None, None)
@@ -187,6 +242,10 @@ class AutoOptimizer:
             self._cg_client = None
             self._cg_client_initialized = False
 
+        if self._http_client:
+            await self._http_client.aclose()
+            self._http_client = None
+
         print("🧠 [Optimizer] Arrêté")
 
     def set_mode(self, mode: OptimizerMode) -> None:
@@ -194,6 +253,14 @@ class AutoOptimizer:
         old_mode = self.mode
         self.mode = mode
         print(f"🧠 [Optimizer] Mode changé: {old_mode.value} → {mode.value}")
+
+    def set_strategy_optimization(self, gabagool: bool = None, smart_ape: bool = None) -> None:
+        """Active/désactive l'optimisation par stratégie."""
+        if gabagool is not None:
+            self._optimize_gabagool = gabagool
+        if smart_ape is not None:
+            self._optimize_smart_ape = smart_ape
+        print(f"🧠 [Optimizer] Gabagool={self._optimize_gabagool}, SmartApe={self._optimize_smart_ape}")
 
     # ═══════════════════════════════════════════════════════════════
     # BOUCLE PRINCIPALE
@@ -207,17 +274,19 @@ class AutoOptimizer:
                     # 1. Collecter les conditions actuelles
                     self._conditions = await self._collect_conditions()
 
-                    # 2. Calculer les paramètres optimaux
-                    optimized = self._compute_optimal_params(self._conditions)
+                    # 2. Optimiser Gabagool si activé
+                    if self._optimize_gabagool and self.gabagool:
+                        self._gabagool_params = self._optimize_gabagool_params(self._conditions)
+                        if self.mode == OptimizerMode.FULL_AUTO:
+                            self._apply_gabagool_params(self._gabagool_params)
 
-                    # 3. Appliquer si changement significatif
-                    if self.mode == OptimizerMode.FULL_AUTO:
-                        changes = self._apply_params(optimized)
-                        if changes:
-                            self._last_update = datetime.now()
+                    # 3. Optimiser Smart Ape si activé
+                    if self._optimize_smart_ape and self.smart_ape:
+                        self._smart_ape_params = self._optimize_smart_ape_params(self._conditions)
+                        if self.mode == OptimizerMode.FULL_AUTO:
+                            self._apply_smart_ape_params(self._smart_ape_params)
 
-                    # 4. Stocker pour mode SEMI_AUTO (suggestions)
-                    self._current_params = optimized
+                    self._last_update = datetime.now()
 
                 await asyncio.sleep(self._update_interval)
 
@@ -235,27 +304,23 @@ class AutoOptimizer:
         """Collecte les métriques de marché actuelles."""
         conditions = MarketConditions()
 
-        # Données du scanner
+        # Données du scanner Polymarket
         if self.scanner:
             markets = list(self.scanner.markets.values())
 
             if markets:
-                # Spread moyen
                 spreads = [m.effective_spread for m in markets if m.is_valid and m.effective_spread > 0]
                 if spreads:
                     conditions.avg_spread = sum(spreads) / len(spreads)
 
-                # Volume moyen
                 volumes = [m.market.volume for m in markets if m.market.volume > 0]
                 if volumes:
                     conditions.avg_volume = sum(volumes) / len(volumes)
 
-                # Liquidité moyenne
                 liquidities = [m.market.liquidity for m in markets if m.market.liquidity > 0]
                 if liquidities:
                     conditions.avg_liquidity = sum(liquidities) / len(liquidities)
 
-            # WebSocket status
             conditions.ws_connected = self.scanner._ws_feed.is_connected if self.scanner._ws_feed else False
 
         # Données Gabagool
@@ -264,23 +329,29 @@ class AutoOptimizer:
             active = [p for p in positions if not p.is_locked]
             locked = [p for p in positions if p.is_locked]
 
-            conditions.active_positions = len(active)
-            conditions.locked_positions = len(locked)
+            conditions.gabagool_active_positions = len(active)
+            conditions.gabagool_locked_positions = len(locked)
 
-            # Pair cost moyen des positions actives
             if active:
-                conditions.avg_pair_cost = sum(p.pair_cost for p in active) / len(active)
+                conditions.gabagool_avg_pair_cost = sum(p.pair_cost for p in active) / len(active)
 
-        # Volatilité externe (CoinGecko)
+        # Données Smart Ape
+        if self.smart_ape:
+            positions = self.smart_ape.get_all_positions()
+            conditions.smart_ape_active_rounds = len([p for p in positions if not p.is_closed])
+
+        # Volatilité CoinGecko
         conditions.volatility_score = await self._get_volatility_score()
+
+        # Prix BTC (Binance)
+        conditions.btc = await self._get_btc_conditions()
 
         conditions.timestamp = datetime.now()
         return conditions
 
     async def _get_volatility_score(self) -> float:
-        """Récupère le score de volatilité depuis CoinGecko (client persistent)."""
+        """Récupère le score de volatilité depuis CoinGecko."""
         try:
-            # Initialiser le client une seule fois
             if not self._cg_client_initialized:
                 from api.public.coingecko_client import CoinGeckoClient
                 self._cg_client = CoinGeckoClient()
@@ -290,163 +361,147 @@ class AutoOptimizer:
             if self._cg_client:
                 ranking = await self._cg_client.get_volatility_ranking()
                 if ranking:
-                    # Moyenne des scores de volatilité
                     scores = [score for _, score in ranking]
                     return sum(scores) / len(scores) if scores else 50.0
 
-        except Exception as e:
-            # Ne pas spammer les logs - juste retourner la valeur par défaut
+        except Exception:
             pass
 
-        return 50.0  # Valeur par défaut
+        return 50.0
+
+    async def _get_btc_conditions(self) -> BTCConditions:
+        """Récupère les conditions BTC depuis Binance."""
+        btc = BTCConditions()
+
+        try:
+            if not self._http_client:
+                return btc
+
+            # Prix actuel BTC
+            resp = await self._http_client.get(
+                "https://api.binance.com/api/v3/ticker/price",
+                params={"symbol": "BTCUSDT"}
+            )
+
+            if resp.status_code == 200:
+                data = resp.json()
+                btc.price = float(data["price"])
+                btc.last_updated = datetime.now()
+
+                # Ajouter à l'historique
+                self._btc_history.append((datetime.now(), btc.price))
+
+                # Garder seulement les 10 dernières minutes
+                cutoff = datetime.now() - timedelta(minutes=10)
+                self._btc_history = [(t, p) for t, p in self._btc_history if t > cutoff]
+
+                # Calculer les variations
+                if len(self._btc_history) >= 2:
+                    # Prix il y a ~1 minute
+                    one_min_ago = datetime.now() - timedelta(minutes=1)
+                    prices_1m = [p for t, p in self._btc_history if t < one_min_ago]
+                    if prices_1m:
+                        btc.price_1m_ago = prices_1m[-1]
+                        btc.change_1m_pct = ((btc.price - btc.price_1m_ago) / btc.price_1m_ago) * 100
+
+                    # Prix il y a ~5 minutes
+                    five_min_ago = datetime.now() - timedelta(minutes=5)
+                    prices_5m = [p for t, p in self._btc_history if t < five_min_ago]
+                    if prices_5m:
+                        btc.price_5m_ago = prices_5m[-1]
+                        btc.change_5m_pct = ((btc.price - btc.price_5m_ago) / btc.price_5m_ago) * 100
+
+                    # Calculer volatilité 1 min (écart-type des variations)
+                    recent = [p for t, p in self._btc_history if t > one_min_ago]
+                    if len(recent) >= 3:
+                        avg = sum(recent) / len(recent)
+                        variance = sum((p - avg) ** 2 for p in recent) / len(recent)
+                        btc.volatility_1m = (variance ** 0.5) / avg * 100
+
+                    # Déterminer le momentum
+                    if btc.change_1m_pct > 0.1:
+                        btc.momentum = "up"
+                    elif btc.change_1m_pct < -0.1:
+                        btc.momentum = "down"
+                    else:
+                        btc.momentum = "neutral"
+
+        except Exception as e:
+            # Silencieux - pas critique
+            pass
+
+        return btc
 
     # ═══════════════════════════════════════════════════════════════
-    # CALCUL DES PARAMÈTRES OPTIMAUX
+    # OPTIMISATION GABAGOOL
     # ═══════════════════════════════════════════════════════════════
 
-    def _compute_optimal_params(self, conditions: MarketConditions) -> OptimizedParams:
-        """Calcule les paramètres optimaux basés sur les conditions."""
-        params = OptimizedParams()
+    def _optimize_gabagool_params(self, conditions: MarketConditions) -> GabagoolParams:
+        """Calcule les paramètres optimaux pour Gabagool."""
+        params = GabagoolParams()
 
-        params.max_pair_cost = self._optimize_max_pair_cost(conditions)
-        params.min_improvement = self._optimize_min_improvement(conditions)
-        params.max_pair_cost = self._optimize_max_pair_cost(conditions)
-        params.min_improvement = self._optimize_min_improvement(conditions)
-        # params.order_size_usd removed
-        # params.max_position_usd removed
-        params.first_buy_threshold = self._optimize_first_buy_threshold(conditions)
-        params.refresh_interval = self._optimize_refresh_interval(conditions)
+        # max_pair_cost selon spread et volatilité
+        base_mpc = 0.975
+
+        if conditions.avg_spread > 0.15:
+            base_mpc = 0.965  # Gros spread = plus de marge possible
+        elif conditions.avg_spread > 0.10:
+            base_mpc = 0.970
+        elif conditions.avg_spread < 0.05:
+            base_mpc = 0.980  # Spread serré = accepter moins
+
+        if conditions.volatility_score > 70:
+            base_mpc -= 0.005  # Plus conservateur en haute vol
+        elif conditions.volatility_score < 30:
+            base_mpc += 0.005  # Plus agressif en basse vol
+
+        params.max_pair_cost = max(0.950, min(0.985, base_mpc))
+
+        # min_improvement selon état des positions
+        if conditions.gabagool_active_positions == 0:
+            params.min_improvement = 0.0
+        elif conditions.gabagool_avg_pair_cost > 0.98:
+            params.min_improvement = 0.001  # Besoin d'améliorer rapidement
+        elif conditions.gabagool_avg_pair_cost > 0.96:
+            params.min_improvement = 0.002
+        elif conditions.gabagool_avg_pair_cost > 0.94:
+            params.min_improvement = 0.005
+        else:
+            params.min_improvement = 0.008  # Déjà bon, être strict
+
+        # first_buy_threshold selon spread
+        base_fbt = 0.55
+        if conditions.avg_spread > 0.12:
+            base_fbt = 0.50  # Plus agressif
+        elif conditions.avg_spread < 0.06:
+            base_fbt = 0.60  # Plus conservateur
+
+        if conditions.volatility_score > 70:
+            base_fbt -= 0.05
+        elif conditions.volatility_score < 30:
+            base_fbt += 0.05
+
+        params.first_buy_threshold = max(0.45, min(0.65, base_fbt))
 
         return params
 
-    def _optimize_max_pair_cost(self, conditions: MarketConditions) -> float:
-        """
-        Optimise max_pair_cost selon le spread et la volatilité.
-
-        - Gros spread → accepter plus de marge (0.92)
-        - Spread serré → accepter moins (0.98)
-        - Haute volatilité → plus conservateur (-0.02)
-        """
-        base = 0.95
-
-        # Ajuster selon spread
-        if conditions.avg_spread > 0.15:
-            base = 0.92  # Gros spread = plus de marge possible
-        elif conditions.avg_spread > 0.10:
-            base = 0.94
-        elif conditions.avg_spread < 0.06:
-            base = 0.98  # Spread serré = accepter moins
-
-        # Ajuster selon volatilité
-        if conditions.volatility_score > 70:
-            base -= 0.02  # Plus conservateur en haute vol
-        elif conditions.volatility_score < 30:
-            base += 0.01  # Plus agressif en basse vol
-
-        return max(0.90, min(0.99, base))
-
-    def _optimize_min_improvement(self, conditions: MarketConditions) -> float:
-        """
-        Optimise min_improvement selon l'état des positions.
-
-        - Positions nouvelles → pas de seuil (0.000)
-        - pair_cost élevé → flexible (0.002)
-        - pair_cost bas → strict (0.010)
-        """
-        # Si pas de positions actives, être ouvert
-        if conditions.active_positions == 0:
-            return 0.0
-
-        # Selon le pair_cost moyen
-        if conditions.avg_pair_cost > 0.98:
-            return 0.001  # Besoin d'améliorer rapidement
-        elif conditions.avg_pair_cost > 0.96:
-            return 0.002
-        elif conditions.avg_pair_cost > 0.94:
-            return 0.005  # Standard
-        else:
-            return 0.008  # Déjà bon, être strict
-
-    # _optimize_order_size removed (Capital controlled by User/Kelly)
-    # _optimize_max_position removed (Capital controlled by User)
-
-    def _optimize_first_buy_threshold(self, conditions: MarketConditions) -> float:
-        """
-        Optimise first_buy_threshold selon le spread et la volatilité.
-
-        - Gros spread → plus agressif (0.50)
-        - Haute volatilité → plus agressif (0.50)
-        - Normal → équilibré (0.55)
-        """
-        base = 0.55
-
-        # Plus agressif avec gros spread
-        if conditions.avg_spread > 0.12:
-            base = 0.50
-        elif conditions.avg_spread < 0.06:
-            base = 0.60  # Plus conservateur avec spread serré
-
-        # Plus agressif en haute volatilité
-        if conditions.volatility_score > 70:
-            base -= 0.05
-        elif conditions.volatility_score < 30:
-            base += 0.05
-
-        return max(0.45, min(0.65, base))
-
-    def _optimize_refresh_interval(self, conditions: MarketConditions) -> float:
-        """
-        Optimise refresh_interval selon les conditions.
-
-        - WebSocket actif → plus lent (données temps réel)
-        - Haute volatilité → plus rapide
-        - Beaucoup de positions → plus rapide
-        """
-        base = 1.0
-
-        # WebSocket actif = moins besoin de polling
-        if conditions.ws_connected:
-            base = 1.5
-
-        # Plus rapide en haute volatilité
-        if conditions.volatility_score > 70:
-            base = 0.5
-        elif conditions.volatility_score > 50:
-            base = min(base, 1.0)
-
-        # Plus rapide si positions actives
-        if conditions.active_positions > 3:
-            base = min(base, 0.5)
-
-        return max(0.5, min(2.0, base))
-
-    # ═══════════════════════════════════════════════════════════════
-    # APPLICATION DES PARAMÈTRES
-    # ═══════════════════════════════════════════════════════════════
-
-    def _apply_params(self, params: OptimizedParams) -> List[str]:
-        """
-        Applique les paramètres optimisés au GabagoolEngine.
-
-        Retourne la liste des paramètres modifiés.
-        """
+    def _apply_gabagool_params(self, params: GabagoolParams) -> List[str]:
+        """Applique les paramètres optimisés à Gabagool."""
         if not self.gabagool:
             return []
 
         changes = []
         config = self.gabagool.config
-
-        # Seuil de changement significatif
-        THRESHOLD = 0.01  # 1% de changement
+        THRESHOLD = 0.01
 
         # max_pair_cost
         if abs(config.max_pair_cost - params.max_pair_cost) / config.max_pair_cost > THRESHOLD:
             old = config.max_pair_cost
             config.max_pair_cost = params.max_pair_cost
             changes.append(f"max_pair_cost: {old:.3f} → {params.max_pair_cost:.3f}")
-            self._log_event("max_pair_cost", old, params.max_pair_cost, "spread/volatility")
+            self._log_event("gabagool", "max_pair_cost", old, params.max_pair_cost, "spread/volatility")
 
-        # min_improvement - vérifier qu'il y a un changement réel
+        # min_improvement
         min_imp_changed = False
         if config.min_improvement == 0 and params.min_improvement > 0:
             min_imp_changed = True
@@ -459,34 +514,95 @@ class AutoOptimizer:
             old = config.min_improvement
             config.min_improvement = params.min_improvement
             changes.append(f"min_improvement: {old:.4f} → {params.min_improvement:.4f}")
-            self._log_event("min_improvement", old, params.min_improvement, "position_state")
+            self._log_event("gabagool", "min_improvement", old, params.min_improvement, "position_state")
 
-        # order_size_usd REMOVED (Manual/Kelly Only)
-        # max_position_usd REMOVED (Manual Only)
-        if hasattr(config, 'first_buy_threshold'):
-            if abs(config.first_buy_threshold - params.first_buy_threshold) / config.first_buy_threshold > THRESHOLD:
-                old = config.first_buy_threshold
-                config.first_buy_threshold = params.first_buy_threshold
-                changes.append(f"first_buy_threshold: {old:.3f} → {params.first_buy_threshold:.3f}")
-                self._log_event("first_buy_threshold", old, params.first_buy_threshold, "spread")
-
-        # Log si changements
         if changes:
             self._total_adjustments += len(changes)
-            print(f"⚡ [Optimizer] Paramètres mis à jour:")
-            for change in changes:
-                print(f"   • {change}")
-
-            # Callback
-            if self.on_params_updated:
-                self.on_params_updated(params, changes)
 
         return changes
 
-    def _log_event(self, param: str, old: float, new: float, reason: str) -> None:
+    # ═══════════════════════════════════════════════════════════════
+    # OPTIMISATION SMART APE
+    # ═══════════════════════════════════════════════════════════════
+
+    def _optimize_smart_ape_params(self, conditions: MarketConditions) -> SmartApeParams:
+        """Calcule les paramètres optimaux pour Smart Ape."""
+        params = SmartApeParams()
+        btc = conditions.btc
+
+        # window_minutes selon momentum BTC
+        # Momentum fort = fenêtre courte (capturer vite)
+        # Momentum faible = fenêtre large (attendre confirmation)
+        if abs(btc.change_1m_pct) > 0.3:
+            params.window_minutes = 1  # Mouvement fort, agir vite
+        elif abs(btc.change_1m_pct) > 0.15:
+            params.window_minutes = 2
+        else:
+            params.window_minutes = 3  # Calme, attendre
+
+        # dump_threshold selon volatilité BTC
+        # Haute volatilité = seuil plus élevé (éviter faux signaux)
+        # Basse volatilité = seuil plus bas (signaux plus rares)
+        if btc.volatility_1m > 0.5:
+            params.dump_threshold = 0.20  # Volatil, exiger plus
+        elif btc.volatility_1m > 0.2:
+            params.dump_threshold = 0.15
+        else:
+            params.dump_threshold = 0.12  # Calme, seuil bas
+
+        # min_payout_ratio selon volatilité globale
+        if conditions.volatility_score > 70:
+            params.min_payout_ratio = 1.7  # Risqué, exiger plus
+        elif conditions.volatility_score > 50:
+            params.min_payout_ratio = 1.5
+        else:
+            params.min_payout_ratio = 1.4  # Calme, accepter moins
+
+        return params
+
+    def _apply_smart_ape_params(self, params: SmartApeParams) -> List[str]:
+        """Applique les paramètres optimisés à Smart Ape."""
+        if not self.smart_ape:
+            return []
+
+        changes = []
+        config = self.smart_ape.config
+
+        # window_minutes
+        if config.window_minutes != params.window_minutes:
+            old = config.window_minutes
+            config.window_minutes = params.window_minutes
+            changes.append(f"window_minutes: {old} → {params.window_minutes}")
+            self._log_event("smart_ape", "window_minutes", old, params.window_minutes, "btc_momentum")
+
+        # dump_threshold (seuil 5%)
+        if abs(config.dump_threshold - params.dump_threshold) / config.dump_threshold > 0.05:
+            old = config.dump_threshold
+            config.dump_threshold = params.dump_threshold
+            changes.append(f"dump_threshold: {old:.2f} → {params.dump_threshold:.2f}")
+            self._log_event("smart_ape", "dump_threshold", old, params.dump_threshold, "btc_volatility")
+
+        # min_payout_ratio (seuil 5%)
+        if abs(config.min_payout_ratio - params.min_payout_ratio) / config.min_payout_ratio > 0.05:
+            old = config.min_payout_ratio
+            config.min_payout_ratio = params.min_payout_ratio
+            changes.append(f"min_payout_ratio: {old:.2f} → {params.min_payout_ratio:.2f}")
+            self._log_event("smart_ape", "min_payout_ratio", old, params.min_payout_ratio, "volatility")
+
+        if changes:
+            self._total_adjustments += len(changes)
+
+        return changes
+
+    # ═══════════════════════════════════════════════════════════════
+    # LOGGING
+    # ═══════════════════════════════════════════════════════════════
+
+    def _log_event(self, strategy: str, param: str, old: float, new: float, reason: str) -> None:
         """Enregistre un événement de modification."""
         event = OptimizationEvent(
             timestamp=datetime.now(),
+            strategy=strategy,
             param_name=param,
             old_value=old,
             new_value=new,
@@ -494,76 +610,8 @@ class AutoOptimizer:
         )
         self._events.append(event)
 
-        # Garder seulement les 100 derniers événements
         if len(self._events) > 100:
             self._events = self._events[-100:]
-
-    # ═══════════════════════════════════════════════════════════════
-    # SUGGESTIONS (MODE SEMI-AUTO)
-    # ═══════════════════════════════════════════════════════════════
-
-    def get_suggestions(self) -> dict:
-        """
-        Retourne les suggestions de paramètres (pour mode SEMI_AUTO).
-
-        Utilisé par le dashboard pour afficher les recommandations.
-        """
-        if not self._conditions:
-            return {}
-
-        current = {}
-        if self.gabagool:
-            config = self.gabagool.config
-            current = {
-                "max_pair_cost": config.max_pair_cost,
-                "min_improvement": config.min_improvement,
-            }
-
-        suggested = self._current_params.to_dict()
-
-        # Calculer les différences
-        suggestions = []
-        for key in suggested:
-            if key in current:
-                diff = ((suggested[key] - current[key]) / current[key]) * 100 if current[key] != 0 else 0
-                if abs(diff) > 1:  # Plus de 1% de différence
-                    suggestions.append({
-                        "param": key,
-                        "current": current[key],
-                        "suggested": suggested[key],
-                        "change_pct": round(diff, 1),
-                        "direction": "↑" if diff > 0 else "↓"
-                    })
-
-        return {
-            "conditions": {
-                "avg_spread": round(self._conditions.avg_spread, 4),
-                "avg_liquidity": round(self._conditions.avg_liquidity, 0),
-                "volatility_score": round(self._conditions.volatility_score, 1),
-                "active_positions": self._conditions.active_positions,
-                "ws_connected": self._conditions.ws_connected,
-            },
-            "suggestions": suggestions,
-            "timestamp": self._conditions.timestamp.isoformat()
-        }
-
-    def apply_suggestion(self, param_name: str) -> bool:
-        """Applique une suggestion spécifique."""
-        if not self.gabagool or not hasattr(self._current_params, param_name):
-            return False
-
-        new_value = getattr(self._current_params, param_name)
-        config = self.gabagool.config
-
-        if hasattr(config, param_name):
-            old_value = getattr(config, param_name)
-            setattr(config, param_name, new_value)
-            self._log_event(param_name, old_value, new_value, "manual_apply")
-            self._total_adjustments += 1
-            print(f"✅ [Optimizer] Suggestion appliquée: {param_name} = {new_value}")
-            return True
-
-        return False
 
     # ═══════════════════════════════════════════════════════════════
     # STATUS
@@ -571,15 +619,22 @@ class AutoOptimizer:
 
     def get_status(self) -> dict:
         """Retourne le status complet de l'optimiseur."""
-        current_params = {}
+        gabagool_current = {}
         if self.gabagool:
             config = self.gabagool.config
-            current_params = {
+            gabagool_current = {
                 "max_pair_cost": config.max_pair_cost,
                 "min_improvement": config.min_improvement,
             }
-            if hasattr(config, 'first_buy_threshold'):
-                current_params["first_buy_threshold"] = config.first_buy_threshold
+
+        smart_ape_current = {}
+        if self.smart_ape:
+            config = self.smart_ape.config
+            smart_ape_current = {
+                "window_minutes": config.window_minutes,
+                "dump_threshold": config.dump_threshold,
+                "min_payout_ratio": config.min_payout_ratio,
+            }
 
         conditions_dict = {}
         if self._conditions:
@@ -588,24 +643,36 @@ class AutoOptimizer:
                 "avg_volume": round(self._conditions.avg_volume, 0),
                 "avg_liquidity": round(self._conditions.avg_liquidity, 0),
                 "volatility_score": round(self._conditions.volatility_score, 1),
-                "active_positions": self._conditions.active_positions,
-                "locked_positions": self._conditions.locked_positions,
-                "avg_pair_cost": round(self._conditions.avg_pair_cost, 4),
                 "ws_connected": self._conditions.ws_connected,
+                "gabagool_positions": self._conditions.gabagool_active_positions,
+                "gabagool_avg_pair_cost": round(self._conditions.gabagool_avg_pair_cost, 4),
+                "smart_ape_rounds": self._conditions.smart_ape_active_rounds,
+                "btc_price": round(self._conditions.btc.price, 2),
+                "btc_change_1m": round(self._conditions.btc.change_1m_pct, 3),
+                "btc_momentum": self._conditions.btc.momentum,
             }
 
         return {
             "enabled": self._enabled,
             "mode": self.mode.value,
             "running": self._running,
+            "optimize_gabagool": self._optimize_gabagool,
+            "optimize_smart_ape": self._optimize_smart_ape,
             "last_update": self._last_update.isoformat() if self._last_update else None,
             "total_adjustments": self._total_adjustments,
-            "current_params": current_params,
-            "optimized_params": self._current_params.to_dict(),
+            "gabagool": {
+                "current": gabagool_current,
+                "optimized": self._gabagool_params.to_dict(),
+            },
+            "smart_ape": {
+                "current": smart_ape_current,
+                "optimized": self._smart_ape_params.to_dict(),
+            },
             "conditions": conditions_dict,
             "recent_events": [
                 {
                     "timestamp": e.timestamp.isoformat(),
+                    "strategy": e.strategy,
                     "param": e.param_name,
                     "old": e.old_value,
                     "new": e.new_value,
@@ -614,3 +681,56 @@ class AutoOptimizer:
                 for e in self.recent_events
             ]
         }
+
+    def get_suggestions(self) -> dict:
+        """Retourne les suggestions de paramètres (mode SEMI_AUTO)."""
+        suggestions = {
+            "gabagool": [],
+            "smart_ape": [],
+            "conditions": {}
+        }
+
+        if not self._conditions:
+            return suggestions
+
+        # Gabagool suggestions
+        if self.gabagool:
+            config = self.gabagool.config
+            optimized = self._gabagool_params
+
+            if abs(config.max_pair_cost - optimized.max_pair_cost) / config.max_pair_cost > 0.01:
+                suggestions["gabagool"].append({
+                    "param": "max_pair_cost",
+                    "current": config.max_pair_cost,
+                    "suggested": optimized.max_pair_cost,
+                    "reason": "spread/volatility"
+                })
+
+        # Smart Ape suggestions
+        if self.smart_ape:
+            config = self.smart_ape.config
+            optimized = self._smart_ape_params
+
+            if config.window_minutes != optimized.window_minutes:
+                suggestions["smart_ape"].append({
+                    "param": "window_minutes",
+                    "current": config.window_minutes,
+                    "suggested": optimized.window_minutes,
+                    "reason": "btc_momentum"
+                })
+
+            if abs(config.dump_threshold - optimized.dump_threshold) > 0.02:
+                suggestions["smart_ape"].append({
+                    "param": "dump_threshold",
+                    "current": config.dump_threshold,
+                    "suggested": optimized.dump_threshold,
+                    "reason": "btc_volatility"
+                })
+
+        suggestions["conditions"] = {
+            "btc_price": round(self._conditions.btc.price, 2),
+            "btc_momentum": self._conditions.btc.momentum,
+            "volatility": round(self._conditions.volatility_score, 1),
+        }
+
+        return suggestions

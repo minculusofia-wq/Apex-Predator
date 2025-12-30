@@ -44,15 +44,27 @@ class TradingParams:
     max_duration_hours: int = 4        # 4h max (focus court terme comme Gabagool original)
 
     # ═══════════════════════════════════════════════════════════════
-    # PARAMÈTRES DE CAPITAL (Gabagool)
+    # GESTION CAPITAL PAR STRATÉGIE (v7.1)
     # ═══════════════════════════════════════════════════════════════
-    capital_per_trade: float = 25.0     # $ par trade (aligné avec GabagoolConfig)
-    max_open_positions: int = 15        # Marchés simultanés (Gabagool accumule)
+
+    # Capital Gabagool
+    gabagool_capital_usd: float = 500.0       # Capital total alloué à Gabagool ($)
+    gabagool_trade_percent: float = 5.0       # % du capital Gabagool par trade (5% = $25 si capital=$500)
+    gabagool_max_positions: int = 15          # Positions simultanées max Gabagool
+
+    # Capital Smart Ape
+    smart_ape_capital_usd: float = 300.0      # Capital total alloué à Smart Ape ($)
+    smart_ape_trade_percent: float = 8.0      # % du capital Smart Ape par trade (8% = $24 si capital=$300)
+    smart_ape_max_positions: int = 5          # Positions simultanées max Smart Ape
+
+    # Legacy (compatibilité)
+    capital_per_trade: float = 25.0     # $ par trade (utilisé si % non défini)
+    max_open_positions: int = 15        # Positions max globales
     max_total_exposure: float = 1000.0  # Exposition totale max en $
-    
+
     # 6.1: Risk Management - Multiplicateurs de capital dynamiques (suggestion)
-    capital_multiplier_score_5: float = 1.2  # 120% du capital pour les trades 5 étoiles (suggestion)
-    capital_multiplier_score_4: float = 1.0  # 100% du capital pour les trades 4 étoiles (suggestion)
+    capital_multiplier_score_5: float = 1.2  # 120% du capital pour les trades 5 étoiles
+    capital_multiplier_score_4: float = 1.0  # 100% du capital pour les trades 4 étoiles
 
     # ═══════════════════════════════════════════════════════════════
     # PARAMÈTRES D'EXÉCUTION (Optimisés HFT - Ultra-rapide)
@@ -74,7 +86,64 @@ class TradingParams:
     # ═══════════════════════════════════════════════════════════════
     auto_trading_enabled: bool = True  # Trading automatique activé
     require_confirmation: bool = True   # Confirmation avant trade
-    
+
+    # ═══════════════════════════════════════════════════════════════
+    # SÉLECTION DE STRATÉGIE (v7.0)
+    # ═══════════════════════════════════════════════════════════════
+    strategy_mode: str = "gabagool"  # "gabagool" | "smart_ape" | "both"
+
+    # ═══════════════════════════════════════════════════════════════
+    # PARAMÈTRES SMART APE (v7.0)
+    # Stratégie ciblant les marchés "Bitcoin Up or Down" 15 minutes
+    # ═══════════════════════════════════════════════════════════════
+    smart_ape_enabled: bool = False           # Smart Ape activé
+    smart_ape_window_minutes: int = 2         # Fenêtre d'analyse (premières minutes du round)
+    smart_ape_dump_threshold: float = 0.15    # Seuil de dump pour signal (15%)
+    smart_ape_min_payout_ratio: float = 1.5   # Ratio payout minimum (UP+DOWN < $X)
+    smart_ape_order_size_usd: float = 25.0    # Taille ordre en $
+    smart_ape_max_position_usd: float = 200.0 # Position max par round
+
+    # ═══════════════════════════════════════════════════════════════
+    # KELLY CRITERION SIZING (v7.2)
+    # Dimensionnement optimal basé sur l'avantage statistique
+    # f* = (p * b - q) / b où p=prob win, q=prob loss, b=odds
+    # ═══════════════════════════════════════════════════════════════
+    kelly_enabled_gabagool: bool = False      # Kelly activé pour Gabagool
+    kelly_enabled_smart_ape: bool = False     # Kelly activé pour Smart Ape
+    kelly_fraction: float = 0.25              # Fraction Kelly (0.25 = quarter-Kelly, plus conservateur)
+    kelly_min_edge: float = 0.02              # Edge minimum requis (2%) pour appliquer Kelly
+    kelly_max_size_multiplier: float = 2.0    # Multiplicateur max vs taille de base (limite risque)
+    kelly_lookback_trades: int = 50           # Nombre de trades pour calculer win rate
+
+    # ═══════════════════════════════════════════════════════════════
+    # AUTO-OPTIMIZER (v7.2)
+    # Optimisation automatique des paramètres par stratégie
+    # ═══════════════════════════════════════════════════════════════
+    optimizer_enabled: bool = True            # Auto-optimizer global activé
+    optimizer_gabagool: bool = True           # Optimiser paramètres Gabagool
+    optimizer_smart_ape: bool = True          # Optimiser paramètres Smart Ape
+    optimizer_interval_seconds: float = 5.0   # Intervalle de mise à jour
+
+    # ═══════════════════════════════════════════════════════════════
+    # MÉTHODES DE CALCUL CAPITAL (v7.1)
+    # ═══════════════════════════════════════════════════════════════
+
+    def get_gabagool_trade_size(self) -> float:
+        """Calcule la taille de trade Gabagool basée sur le % du capital."""
+        return (self.gabagool_capital_usd * self.gabagool_trade_percent) / 100.0
+
+    def get_smart_ape_trade_size(self) -> float:
+        """Calcule la taille de trade Smart Ape basée sur le % du capital."""
+        return (self.smart_ape_capital_usd * self.smart_ape_trade_percent) / 100.0
+
+    def get_gabagool_remaining_capital(self, current_exposure: float) -> float:
+        """Retourne le capital Gabagool restant disponible."""
+        return max(0, self.gabagool_capital_usd - current_exposure)
+
+    def get_smart_ape_remaining_capital(self, current_exposure: float) -> float:
+        """Retourne le capital Smart Ape restant disponible."""
+        return max(0, self.smart_ape_capital_usd - current_exposure)
+
     def to_dict(self) -> dict:
         """Convertit en dictionnaire pour sauvegarde."""
         return asdict(self)
