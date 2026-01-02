@@ -401,7 +401,7 @@ class HFTScalperApp(App):
         text-align: center;
         text-style: bold;
         color: #58a6ff;
-        background: linear-gradient(90deg, #0d1117, #161b22, #0d1117);
+        background: #0d1117;
         padding: 1;
         border: heavy #30363d;
     }
@@ -633,7 +633,7 @@ class HFTScalperApp(App):
         self._is_paused = False
         self._is_running = False
         self._wallet_connected = False
-        self._start_time = datetime.now()
+        self._uptime_start_dt = datetime.now()
     
     def compose(self) -> ComposeResult:
         yield GradientHeader()
@@ -676,7 +676,7 @@ class HFTScalperApp(App):
             pass
     
     def _update_uptime(self) -> None:
-        elapsed = datetime.now() - self._start_time
+        elapsed = datetime.now() - self._uptime_start_dt
         hours, remainder = divmod(int(elapsed.total_seconds()), 3600)
         minutes, seconds = divmod(remainder, 60)
         
@@ -687,7 +687,7 @@ class HFTScalperApp(App):
         btn_id = event.button.id
         
         if btn_id == "btn-start":
-            await self._start_scanner()
+            self._start_scanner()
         elif btn_id == "btn-pause":
             self._toggle_pause()
         elif btn_id == "btn-wallet":
@@ -1060,4 +1060,4 @@ class HFTScalperApp(App):
         asyncio.create_task(self._connect_wallet())
     
     def action_start(self) -> None:
-        asyncio.create_task(self._start_scanner())
+        self._start_scanner()
