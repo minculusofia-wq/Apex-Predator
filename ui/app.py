@@ -591,13 +591,21 @@ class ActivityPanel(Static):
 
 class ControlPanel(Static):
     """Panneau de contrôle."""
-    
+
+    def __init__(self, is_paper_mode: bool = False, **kwargs):
+        super().__init__(**kwargs)
+        self._is_paper_mode = is_paper_mode
+
     def compose(self) -> ComposeResult:
         with Horizontal(id="control-buttons"):
             yield Button("▶️ Démarrer", id="btn-start", variant="success")
             yield Button("⏸️ Pause", id="btn-pause", variant="warning")
             yield Button("💳 Wallet", id="btn-wallet", variant="primary")
             yield Button("🔄 Refresh", id="btn-refresh", variant="default")
+            # Toggle Paper Trading
+            paper_label = "📝 Paper: ON" if self._is_paper_mode else "📝 Paper: OFF"
+            paper_variant = "success" if self._is_paper_mode else "default"
+            yield Button(paper_label, id="btn-paper-toggle", variant=paper_variant)
 
 
 class HFTScalperApp(App):
@@ -890,10 +898,9 @@ class HFTScalperApp(App):
                 with Container(classes="panel"):
                     yield StatsPanel(id="stats-panel")
 
-                # Paper Trading Panel (si mode paper activé)
-                if self._is_paper_mode:
-                    with Container(classes="panel"):
-                        yield PaperTradingPanel(id="paper-panel")
+                # Paper Trading Panel (toujours présent, visibilité contrôlée par display)
+                with Container(classes="panel", id="paper-panel-container"):
+                    yield PaperTradingPanel(id="paper-panel")
 
                 with Container(classes="panel"):
                     yield GabagoolPanel(id="gabagool-panel")
@@ -911,10 +918,17 @@ class HFTScalperApp(App):
                 with Container(classes="panel"):
                     yield ActivityPanel(id="activity-panel")
 
-        yield ControlPanel(id="control-panel")
+        yield ControlPanel(id="control-panel", is_paper_mode=self._is_paper_mode)
         yield Footer()
     
     def on_mount(self) -> None:
+        # Gérer la visibilité initiale du PaperTradingPanel
+        try:
+            paper_container = self.query_one("#paper-panel-container")
+            paper_container.display = self._is_paper_mode
+        except Exception:
+            pass
+
         if self._is_paper_mode:
             self._log("📝 Bot HFT Polymarket - MODE PAPER TRADING", "warning")
             self._log("Aucun trade réel ne sera exécuté", "warning")
@@ -923,6 +937,7 @@ class HFTScalperApp(App):
         else:
             self._log("🚀 Bot HFT Polymarket démarré")
         self._log("Cliquez 'Démarrer' pour lancer le scanner")
+        self._log("Utilisez le bouton 'Paper' pour activer/désactiver le mode paper", "info")
         self.set_interval(1, self._update_uptime)
     
     def _log(self, message: str, level: str = "info") -> None:
@@ -942,7 +957,7 @@ class HFTScalperApp(App):
     
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         btn_id = event.button.id
-        
+
         if btn_id == "btn-start":
             self._start_scanner()
         elif btn_id == "btn-pause":
@@ -955,6 +970,8 @@ class HFTScalperApp(App):
             self._save_config()
         elif btn_id == "btn-reset":
             self._reset_config()
+        elif btn_id == "btn-paper-toggle":
+            await self._toggle_paper_mode()
     
     @work(exclusive=True)
     async def _start_scanner(self) -> None:
@@ -1167,13 +1184,101 @@ class HFTScalperApp(App):
     def _toggle_pause(self) -> None:
         self._is_paused = not self._is_paused
         status = self.query_one("#status-bar-widget", StatusBar)
-        
+
         if self._is_paused:
             status.scanner_status = "⏸️ Pause"
             self._log("⏸️ Scanner en pause", "warning")
         else:
             status.scanner_status = "🟢 Actif"
             self._log("▶️ Scanner repris", "success")
+
+    async def _toggle_paper_mode(self) -> None:
+        """Toggle paper trading mode on/off dynamiquement."""
+        from config import get_trading_params, update_trading_params
+
+        # Toggle le mode
+        self._is_paper_mode = not self._is_paper_mode
+
+        # Mettre à jour le bouton
+        try:
+            btn = self.query_one("#btn-paper-toggle", Button)
+            if self._is_paper_mode:
+                btn.label = "📝 Paper: ON"
+                btn.variant = "success"
+            else:
+                btn.label = "📝 Paper: OFF"
+                btn.variant = "default"
+        except Exception:
+            pass
+
+        # Mettre à jour le header
+        header = self.query_one("#header-title", Static)
+        if self._is_paper_mode:
+            header.add_class("paper-mode")
+            header.update("🦈 APEX PREDATOR - HFT Scalper [PAPER MODE]")
+        else:
+            header.remove_class("paper-mode")
+            header.update("🦈 APEX PREDATOR - HFT Scalper")
+
+        # Mettre à jour le StatusBar
+        status = self.query_one("#status-bar-widget", StatusBar)
+        if self._is_paper_mode:
+            status.wallet_status = "📝 Paper Mode"
+        else:
+            status.wallet_status = "💳 Déconnecté" if not self._wallet_connected else "💳 Connecté"
+
+        # Gérer le PaperTradingPanel dynamiquement
+        try:
+            paper_panel_container = self.query_one("#paper-panel-container")
+            if self._is_paper_mode:
+                paper_panel_container.display = True
+            else:
+                paper_panel_container.display = False
+        except Exception:
+            # Le panel n'existe pas encore, on le créera au prochain cycle
+            pass
+
+        # Initialiser/arrêter les composants paper
+        if self._is_paper_mode:
+            # Initialiser le paper trading si le scanner est démarré
+            if self._is_running and not self._paper_executor:
+                self._paper_capital_manager = PaperCapitalManager()
+                self._paper_trade_store = PaperTradeStore()
+                self._paper_executor = PaperExecutor(
+                    orderbook_manager=self._orderbook_manager,
+                    capital_manager=self._paper_capital_manager,
+                    trade_store=self._paper_trade_store,
+                )
+                self._paper_reporter = PaperReporter(
+                    self._paper_trade_store,
+                    self._paper_capital_manager
+                )
+                await self._paper_executor.start()
+
+                # Connecter au Gabagool
+                if self._gabagool:
+                    self._gabagool.set_executor(self._paper_executor)
+
+                self._log("📝 Paper Trading ACTIVÉ", "success")
+        else:
+            # Arrêter le paper executor
+            if self._paper_executor:
+                await self._paper_executor.stop()
+                self._paper_executor = None
+                self._paper_capital_manager = None
+                self._paper_trade_store = None
+                self._paper_reporter = None
+
+                # Déconnecter du Gabagool
+                if self._gabagool:
+                    self._gabagool.set_executor(None)
+
+                self._log("📝 Paper Trading DÉSACTIVÉ", "warning")
+
+        # Sauvegarder le paramètre
+        params = get_trading_params()
+        params.paper_trading_enabled = self._is_paper_mode
+        update_trading_params(params)
     
     async def _connect_wallet(self) -> None:
         self._log("💳 Connexion wallet...", "info")
