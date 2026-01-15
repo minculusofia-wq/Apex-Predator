@@ -772,19 +772,38 @@ class HFTScalperApp(App):
     }
     
     /* Control Panel */
+    #control-panel {
+        dock: bottom;
+        height: auto;
+        width: 100%;
+    }
+
     #control-buttons {
         padding: 1;
         background: #161b22;
         border: solid #30363d;
+        width: 100%;
+        height: auto;
     }
-    
+
     #control-buttons Button {
         margin: 0 1;
+        min-width: 12;
     }
-    
+
+    /* Paper Toggle Button */
+    #btn-paper-toggle {
+        min-width: 14;
+    }
+
+    #btn-paper-toggle.paper-on {
+        background: #238636;
+        border: solid #3fb950;
+    }
+
     /* Buttons */
     Button {
-        min-width: 16;
+        min-width: 12;
     }
     
     Button.-primary {
