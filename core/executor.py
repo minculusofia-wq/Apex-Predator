@@ -21,6 +21,7 @@ from core.analyzer import Opportunity, OpportunityAction
 from core.order_manager import OrderManager, ActiveOrder
 from core.order_queue import OrderQueue, QueuedOrder, OrderPriority, QueueOrderStatus
 from core.fill_manager import FillManager
+from core.daily_loss_manager import DailyLossManager, DailyLossStatus, get_daily_loss_manager
 from api.private import PolymarketPrivateClient, PolymarketCredentials
 from api.private.polymarket_private import OrderSide
 from config import get_settings, get_trading_params, TradingParams
@@ -94,6 +95,15 @@ class OrderExecutor:
 
         # 7.0: Fill Manager for reconciliation
         self.fill_manager: Optional[FillManager] = None
+
+        # 7.3: Daily Loss Manager for ruin protection
+        self._daily_loss_manager: Optional[DailyLossManager] = None
+
+        # 7.3: Global allocation lock for atomic capital checks
+        self._global_allocation_lock = asyncio.Lock()
+
+        # 7.3: Orphaned orders tracking (when cancel fails)
+        self._orphaned_orders: list[str] = []
 
         # HFT: Connection warming task
         self._warmup_task: Optional[asyncio.Task] = None
@@ -191,6 +201,23 @@ class OrderExecutor:
                 self.fill_manager.on_order_end = self._on_order_end_callback
                 await self.fill_manager.start()
 
+            # 7.3: Démarrer Daily Loss Manager (protection contre ruine)
+            if self._params.daily_loss_limit_enabled:
+                from core.daily_loss_manager import init_daily_loss_manager
+                self._daily_loss_manager = init_daily_loss_manager(
+                    max_daily_loss_usd=self._params.max_daily_loss_usd,
+                    max_daily_loss_percent=self._params.max_daily_loss_percent,
+                    total_capital=self._params.max_total_exposure,
+                    reset_hour_utc=self._params.daily_loss_reset_hour_utc,
+                    warning_threshold=self._params.daily_loss_warning_threshold,
+                    reduction_threshold=self._params.drawdown_reduction_threshold
+                )
+                # Callbacks pour alertes
+                self._daily_loss_manager.on_warning = self._on_daily_loss_warning
+                self._daily_loss_manager.on_blocked = self._on_daily_loss_blocked
+                await self._daily_loss_manager.start()
+                print(f"🛡️ Daily Loss Manager activé: max ${self._params.max_daily_loss_usd}/jour")
+
             # HFT: Démarrer la tâche de connection warming périodique
             if self._client:
                 self._warmup_task = asyncio.create_task(self._connection_warmup_loop())
@@ -217,6 +244,11 @@ class OrderExecutor:
         if self.fill_manager:
             await self.fill_manager.stop()
             self.fill_manager = None
+
+        # 7.3: Stop Daily Loss Manager
+        if self._daily_loss_manager:
+            await self._daily_loss_manager.stop()
+            self._daily_loss_manager = None
 
         # 4.1: Arrêter la queue d'ordres
         if self._order_queue:
@@ -249,36 +281,54 @@ class OrderExecutor:
     async def can_trade(self) -> tuple[bool, str]:
         """
         Vérifie si on peut trader maintenant.
-        
+
         Returns:
             Tuple (peut_trader, raison si non)
         """
-        # Vérifier l'état
-        if self._state != ExecutorState.READY:
-            return False, f"Executor non prêt (état: {self._state.value})"
-        
-        # Vérifier le trading automatique
-        if not self._params.auto_trading_enabled:
-            return False, "Trading automatique désactivé"
-        
-        # Vérifier le délai entre trades
-        if self._last_trade_time:
-            elapsed = (datetime.now() - self._last_trade_time).total_seconds()
-            if elapsed < self._params.min_time_between_trades:
-                remaining = self._params.min_time_between_trades - elapsed
-                return False, f"Attendre {remaining:.0f}s avant prochain trade"
-        
-        # Vérifier le nombre de positions ouvertes
-        open_positions = self._order_manager.open_positions_count
-        if open_positions >= self._params.max_open_positions:
-            return False, f"Limite de positions atteinte ({open_positions}/{self._params.max_open_positions})"
-        
-        # Vérifier l'exposition totale
-        current_exposure = self._order_manager.total_exposure
-        if current_exposure + self._params.capital_per_trade > self._params.max_total_exposure:
-            return False, f"Exposition max atteinte (${current_exposure:.2f}/${self._params.max_total_exposure:.2f})"
-        
-        return True, ""
+        # 7.3: Use global lock for atomic capital checks
+        async with self._global_allocation_lock:
+            # Vérifier l'état
+            if self._state != ExecutorState.READY:
+                return False, f"Executor non prêt (état: {self._state.value})"
+
+            # Vérifier le trading automatique
+            if not self._params.auto_trading_enabled:
+                return False, "Trading automatique désactivé"
+
+            # 7.3: Vérifier la limite de perte journalière (PRIORITÉ #1)
+            if self._daily_loss_manager:
+                can_trade_daily, daily_reason = self._daily_loss_manager.can_trade
+                if not can_trade_daily:
+                    return False, f"🛑 DAILY LOSS LIMIT: {daily_reason}"
+
+            # Vérifier le délai entre trades
+            if self._last_trade_time:
+                elapsed = (datetime.now() - self._last_trade_time).total_seconds()
+                if elapsed < self._params.min_time_between_trades:
+                    remaining = self._params.min_time_between_trades - elapsed
+                    return False, f"Attendre {remaining:.0f}s avant prochain trade"
+
+            # Vérifier le nombre de positions ouvertes
+            open_positions = self._order_manager.open_positions_count
+            if open_positions >= self._params.max_open_positions:
+                return False, f"Limite de positions atteinte ({open_positions}/{self._params.max_open_positions})"
+
+            # Vérifier l'exposition totale
+            current_exposure = self._order_manager.total_exposure
+            if current_exposure + self._params.capital_per_trade > self._params.max_total_exposure:
+                return False, f"Exposition max atteinte (${current_exposure:.2f}/${self._params.max_total_exposure:.2f})"
+
+            # 7.3: Vérifier le solde wallet réel (si client disponible)
+            if self._client:
+                try:
+                    balance = await self._client.get_balance()
+                    if balance < self._params.capital_per_trade:
+                        return False, f"Solde wallet insuffisant: ${balance:.2f} < ${self._params.capital_per_trade:.2f}"
+                except Exception as e:
+                    # Log mais ne bloque pas si erreur de lecture balance
+                    print(f"⚠️ Impossible de vérifier le solde: {e}")
+
+            return True, ""
     
     def _get_market_lock(self, market_id: str) -> asyncio.Lock:
         """5.2: Récupère ou crée un lock pour un marché spécifique."""
@@ -377,62 +427,89 @@ class OrderExecutor:
             finally:
                 self._set_state(ExecutorState.READY)
 
-    async def _wait_for_fills(self, result: TradeResult, timeout: float = 5.0) -> None:
+    async def _wait_for_fills(self, result: TradeResult, timeout: float = 30.0) -> None:
         """
-        6.2: Vérifie si les ordres sont remplis.
-        
+        6.2/7.3: Vérifie si les ordres sont remplis avec timeout étendu et backoff.
+
+        IMPORTANT (v7.3): Améliorations:
+        - Timeout étendu de 5s à 30s
+        - Exponential backoff pour éviter spam API
+        - Tracking séparé des partial fills
+        - Logging amélioré
+
         Args:
             result: Resultat du trade contenant les IDs des ordres
-            timeout: Temps max à attendre (secondes)
+            timeout: Temps max à attendre (secondes) - défaut 30s
         """
         if not self._client or not result.success:
             return
-            
+
         # IDs à vérifier
         order_ids = []
-        if result.order_yes_id: order_ids.append(result.order_yes_id)
-        if result.order_no_id: order_ids.append(result.order_no_id)
-        
+        if result.order_yes_id:
+            order_ids.append(("YES", result.order_yes_id))
+        if result.order_no_id:
+            order_ids.append(("NO", result.order_no_id))
+
         if not order_ids:
             return
 
         start_time = datetime.now()
-        
+
+        # 7.3: Exponential backoff pour polling
+        base_delay = 0.5  # Délai initial
+        max_delay = 5.0   # Délai max
+        current_delay = base_delay
+
+        # Track partial fills
+        partial_fills = {}
+
         while (datetime.now() - start_time).total_seconds() < timeout:
             all_filled = True
-            
-            for order_id in order_ids:
+            any_partial = False
+
+            for side, order_id in order_ids:
                 try:
-                    # Fetch order status from API (simulate via client if needed)
-                    # Note: Private client needs get_order method
                     order_data = await self._client.get_order(order_id)
-                    
+
                     if order_data:
                         status = order_data.get("status", "open")
                         filled = float(order_data.get("sizeMatched", 0.0))
-                        
+                        total_size = float(order_data.get("size", 0.0))
+
                         # Update OrderManager
                         self._order_manager.update_order_status(
                             order_id=order_id,
                             status=status,
                             filled_size=filled
                         )
-                        
-                        # Estimer fees: 2% taker/maker (simplifié si API ne donne pas fee)
-                        # Polymarket fee model: 2% on net winnings? or spread?
-                        # Ici on assume un coût de transaction pour le scoring
-                        
-                        if status != "FILLED" and status != "CANCELED":
+
+                        # 7.3: Track partial fills
+                        if filled > 0 and filled < total_size:
+                            any_partial = True
+                            if order_id not in partial_fills:
+                                partial_fills[order_id] = filled
+                                print(f"📊 [Fill] {side} partial: {filled:.2f}/{total_size:.2f} ({filled/total_size*100:.1f}%)")
+
+                        if status not in ("FILLED", "CANCELED", "EXPIRED"):
                             all_filled = False
-                            
+
                 except Exception as e:
                     print(f"⚠️ Error checking fill for {order_id}: {e}")
                     all_filled = False
-            
+
             if all_filled:
+                print(f"✅ [Fill] Tous les ordres remplis en {(datetime.now() - start_time).total_seconds():.1f}s")
                 break
-                
-            await asyncio.sleep(0.5)
+
+            # 7.3: Exponential backoff
+            await asyncio.sleep(current_delay)
+            current_delay = min(current_delay * 1.5, max_delay)
+
+        else:
+            # Timeout atteint
+            elapsed = (datetime.now() - start_time).total_seconds()
+            print(f"⚠️ [Fill] Timeout après {elapsed:.1f}s. Partial fills: {len(partial_fills)}")
 
     async def _auto_resume(self):
         """Reprend automatiquement après la durée de pause du circuit breaker."""
@@ -479,11 +556,16 @@ class OrderExecutor:
     ) -> TradeResult:
         """
         Place les ordres bilatéraux (YES + NO).
-        
+
+        IMPORTANT (v7.3): Améliorations de sécurité:
+        - Vérification profitabilité AVANT placement
+        - Tracking des ordres orphelins si annulation échoue
+        - Alertes pour positions non hedgées
+
         Args:
             opportunity: Opportunité à trader
             size: Taille des ordres
-            
+
         Returns:
             TradeResult
         """
@@ -493,7 +575,20 @@ class OrderExecutor:
                 success=False,
                 error_message="Client non initialisé"
             )
-        
+
+        # 7.3 FIX: Vérification profitabilité AVANT placement des ordres
+        POLYMARKET_FEE_RATE = 0.02
+        total_cost = opportunity.recommended_price_yes + opportunity.recommended_price_no
+        # Marge pour frais: on veut que total_cost < 1.0 - fees
+        max_profitable_cost = 1.0 - (POLYMARKET_FEE_RATE * 2)  # ~0.96
+
+        if total_cost >= max_profitable_cost:
+            return TradeResult(
+                opportunity_id=opportunity.id,
+                success=False,
+                error_message=f"Non profitable après frais: ${total_cost:.4f} >= ${max_profitable_cost:.4f}"
+            )
+
         order_yes_id = None
         order_no_id = None
 
@@ -526,7 +621,7 @@ class OrderExecutor:
             if isinstance(order_no, Exception):
                 raise order_no  # Propager l'erreur
             order_no_id = order_no.get("id")
-            
+
             # Enregistrer dans l'order manager
             if order_yes_id:
                 self._order_manager.add_order(ActiveOrder(
@@ -539,7 +634,7 @@ class OrderExecutor:
                     size=size,
                     status="open"
                 ))
-            
+
             if order_no_id:
                 self._order_manager.add_order(ActiveOrder(
                     id=order_no_id,
@@ -551,32 +646,47 @@ class OrderExecutor:
                     size=size,
                     status="open"
                 ))
-            
+
             return TradeResult(
                 opportunity_id=opportunity.id,
                 success=True,
                 order_yes_id=order_yes_id,
                 order_no_id=order_no_id
             )
-            
+
         except Exception as e:
-            # 6.1: Risk Management - Logique améliorée pour ordres partiels
+            # 7.3 FIX: Risk Management amélioré pour ordres partiels
             # Si un seul des deux ordres a été placé, on tente de l'annuler
             # pour éviter une position directionnelle non désirée.
+
+            orphaned_order_id = None
+
             if order_yes_id and not order_no_id:
                 try:
                     await self._client.cancel_order(order_yes_id)
                     print(f"⚠️ [RISK] Ordre NO échoué. Annulation de l'ordre YES {order_yes_id} réussie.")
                 except Exception as cancel_e:
-                    print(f"🚨 [RISK] CRITIQUE: Ordre NO échoué ET annulation de l'ordre YES {order_yes_id} échouée. Position ouverte non couverte! Erreur: {cancel_e}")
+                    # 7.3 FIX: Tracker l'ordre orphelin pour suivi manuel
+                    orphaned_order_id = order_yes_id
+                    self._orphaned_orders.append(order_yes_id)
+                    print(f"🚨 [RISK] CRITIQUE: Ordre NO échoué ET annulation YES {order_yes_id} échouée!")
+                    print(f"🚨 [RISK] Position NON HEDGÉE! Ordre ajouté aux orphelins. Erreur: {cancel_e}")
+
             elif order_no_id and not order_yes_id:
-                 # Ce cas est moins probable avec asyncio.gather mais possible
                 try:
                     await self._client.cancel_order(order_no_id)
                     print(f"⚠️ [RISK] Ordre YES échoué. Annulation de l'ordre NO {order_no_id} réussie.")
-                except Exception: # Pas besoin de log critique ici, car le premier ordre a déjà échoué
-                    pass
-            
+                except Exception as cancel_e:
+                    # 7.3 FIX: Tracker l'ordre orphelin
+                    orphaned_order_id = order_no_id
+                    self._orphaned_orders.append(order_no_id)
+                    print(f"🚨 [RISK] CRITIQUE: Ordre YES échoué ET annulation NO {order_no_id} échouée!")
+                    print(f"🚨 [RISK] Position NON HEDGÉE! Ordre ajouté aux orphelins. Erreur: {cancel_e}")
+
+            # 7.3: Log des ordres orphelins pour monitoring
+            if orphaned_order_id and len(self._orphaned_orders) > 0:
+                print(f"📋 [RISK] Total ordres orphelins: {len(self._orphaned_orders)}")
+
             return TradeResult(
                 opportunity_id=opportunity.id,
                 success=False,
@@ -777,3 +887,49 @@ class OrderExecutor:
                 break
             except Exception:
                 pass  # Ignorer les erreurs de warmup silencieusement
+
+    # ═══════════════════════════════════════════════════════════════════
+    # 7.3: Daily Loss Manager Callbacks
+    # ═══════════════════════════════════════════════════════════════════
+
+    def _on_daily_loss_warning(self, current_loss: float, limit: float):
+        """Callback quand on approche de la limite de perte journalière."""
+        percent = (current_loss / limit) * 100
+        print(f"⚠️ DAILY LOSS WARNING: ${current_loss:.2f}/${limit:.2f} ({percent:.1f}%)")
+        print(f"⚠️ Les tailles de position seront réduites automatiquement.")
+
+    def _on_daily_loss_blocked(self, total_loss: float):
+        """Callback quand la limite de perte journalière est atteinte."""
+        print(f"🛑 DAILY LOSS LIMIT REACHED: ${total_loss:.2f}")
+        print(f"🛑 Trading automatiquement BLOQUÉ jusqu'à demain.")
+        # Mettre l'executor en pause
+        self.pause()
+
+    async def record_trade_pnl(self, pnl: float, trade_type: str = "unknown", market_id: str = ""):
+        """
+        Enregistre le PnL d'un trade dans le Daily Loss Manager.
+
+        Args:
+            pnl: Profit/perte (positif = gain, négatif = perte)
+            trade_type: Type de trade (gabagool, smart_ape)
+            market_id: ID du marché
+        """
+        if self._daily_loss_manager:
+            await self._daily_loss_manager.record_trade(pnl, trade_type, market_id)
+
+    def get_position_size_multiplier(self) -> float:
+        """
+        Retourne le multiplicateur de taille de position basé sur les pertes journalières.
+
+        Returns:
+            1.0 = normal, <1.0 = réduit proportionnellement aux pertes
+        """
+        if self._daily_loss_manager:
+            return self._daily_loss_manager.position_size_multiplier
+        return 1.0
+
+    def get_daily_loss_summary(self) -> dict:
+        """Retourne un résumé des pertes journalières."""
+        if self._daily_loss_manager:
+            return self._daily_loss_manager.get_summary()
+        return {"status": "disabled"}

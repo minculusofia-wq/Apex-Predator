@@ -1,0 +1,11 @@
+{
+  "starting_capital": 1000.0,
+  "balance": 1004.9,
+  "allocated": {},
+  "unrealized_pnl": {},
+  "realized_pnl": 4.9,
+  "total_fees_paid": 0.1,
+  "total_slippage_cost": 0.0,
+  "trades_count": 1,
+  "last_updated": "2026-01-15T12:18:57.548673"
+}

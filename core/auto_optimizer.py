@@ -124,9 +124,16 @@ class AutoOptimizer:
     - Gabagool: basé sur spread, volume, pair_cost moyen
     - Smart Ape: basé sur prix BTC, volatilité, momentum
 
+    Intégration Paper Trading (v8.1):
+    - Utilise CapitalOptimizer pour dimensionner selon le capital
+    - Recalcule automatiquement si le capital change significativement
+
     Usage:
         optimizer = AutoOptimizer(scanner, gabagool, smart_ape)
         await optimizer.start()
+
+        # Avec paper trading
+        optimizer.set_paper_capital_manager(paper_capital_manager)
     """
 
     def __init__(
@@ -171,6 +178,17 @@ class AutoOptimizer:
 
         # Callbacks
         self.on_params_updated: Optional[callable] = None
+
+        # ═══════════════════════════════════════════════════════════════
+        # CAPITAL OPTIMIZER INTEGRATION (v8.1)
+        # Recalcule les paramètres de capital si changement significatif
+        # ═══════════════════════════════════════════════════════════════
+        self._capital_optimizer_enabled = True
+        self._paper_capital_manager = None  # PaperCapitalManager si mode paper
+        self._last_capital_optimization: Optional[datetime] = None
+        self._last_optimized_capital: float = 0.0
+        self._capital_change_threshold = 0.05  # 5% de changement déclenche recalcul
+        self._capital_reoptimize_interval = 300  # 5 minutes minimum entre recalculs
 
     # ═══════════════════════════════════════════════════════════════
     # PROPRIÉTÉS
@@ -285,6 +303,10 @@ class AutoOptimizer:
                         self._smart_ape_params = self._optimize_smart_ape_params(self._conditions)
                         if self.mode == OptimizerMode.FULL_AUTO:
                             self._apply_smart_ape_params(self._smart_ape_params)
+
+                    # 4. Reoptimiser le capital si nécessaire (v8.1)
+                    if self.mode == OptimizerMode.FULL_AUTO:
+                        self._reoptimize_capital_if_needed()
 
                     self._last_update = datetime.now()
 
@@ -734,3 +756,143 @@ class AutoOptimizer:
         }
 
         return suggestions
+
+    # ═══════════════════════════════════════════════════════════════
+    # CAPITAL OPTIMIZER INTEGRATION (v8.1)
+    # ═══════════════════════════════════════════════════════════════
+
+    def set_paper_capital_manager(self, capital_manager) -> None:
+        """
+        Configure le PaperCapitalManager pour optimisation dynamique.
+
+        Quand activé, l'optimizer recalcule les paramètres de capital
+        si le capital change de plus de 5%.
+        """
+        self._paper_capital_manager = capital_manager
+        if capital_manager:
+            self._last_optimized_capital = capital_manager.total_equity
+
+    def enable_capital_optimization(self, enabled: bool = True) -> None:
+        """Active/désactive l'optimisation de capital dynamique."""
+        self._capital_optimizer_enabled = enabled
+
+    def optimize_for_capital(
+        self,
+        capital: float,
+        use_kelly: bool = False,
+        win_rate: float = None,
+        avg_win: float = None,
+        avg_loss: float = None,
+        apply_params: bool = True
+    ) -> dict:
+        """
+        Optimise les paramètres pour un capital donné.
+
+        Args:
+            capital: Capital en USD
+            use_kelly: Activer Kelly criterion
+            win_rate/avg_win/avg_loss: Stats pour Kelly
+            apply_params: Appliquer aux TradingParams
+
+        Returns:
+            Dict avec les paramètres optimisés
+        """
+        from core.capital_optimizer import CapitalOptimizer
+
+        optimizer = CapitalOptimizer(
+            capital=capital,
+            use_kelly=use_kelly,
+            win_rate=win_rate,
+            avg_win=avg_win,
+            avg_loss=avg_loss,
+        )
+
+        params = optimizer.calculate_optimal_params()
+
+        if apply_params:
+            optimizer.apply_to_trading_params()
+            self._last_optimized_capital = capital
+            self._last_capital_optimization = datetime.now()
+            self._log_event(
+                "capital",
+                "capital_optimization",
+                self._last_optimized_capital,
+                capital,
+                f"tier={params.tier_label}"
+            )
+            print(f"🧠 [Optimizer] Capital optimisé: ${capital:.2f} ({params.tier_label})")
+
+        return params.to_dict()
+
+    def _should_reoptimize_capital(self) -> bool:
+        """Vérifie si on doit recalculer les paramètres de capital."""
+        if not self._capital_optimizer_enabled:
+            return False
+
+        if not self._paper_capital_manager:
+            return False
+
+        # Première optimisation
+        if self._last_capital_optimization is None:
+            return True
+
+        # Vérifier l'intervalle minimum
+        time_since_last = (datetime.now() - self._last_capital_optimization).total_seconds()
+        if time_since_last < self._capital_reoptimize_interval:
+            return False
+
+        # Vérifier le changement de capital
+        current_capital = self._paper_capital_manager.total_equity
+        if self._last_optimized_capital <= 0:
+            return True
+
+        change_pct = abs(current_capital - self._last_optimized_capital) / self._last_optimized_capital
+        return change_pct >= self._capital_change_threshold
+
+    def _reoptimize_capital_if_needed(self) -> bool:
+        """Recalcule les paramètres de capital si nécessaire."""
+        if not self._should_reoptimize_capital():
+            return False
+
+        current_capital = self._paper_capital_manager.total_equity
+
+        # Obtenir les stats de performance pour Kelly
+        use_kelly = False
+        win_rate = None
+        avg_win = None
+        avg_loss = None
+
+        # Essayer d'obtenir les stats depuis le trade store
+        try:
+            from config import get_trading_params
+            params = get_trading_params()
+
+            if params.kelly_enabled_gabagool or params.kelly_enabled_smart_ape:
+                # On pourrait récupérer les stats depuis le PaperReporter
+                # Pour l'instant, on utilise Kelly uniquement si explicitement activé
+                use_kelly = True
+                # Les stats seraient récupérées depuis le reporter
+        except Exception:
+            pass
+
+        self.optimize_for_capital(
+            capital=current_capital,
+            use_kelly=use_kelly,
+            win_rate=win_rate,
+            avg_win=avg_win,
+            avg_loss=avg_loss,
+        )
+
+        return True
+
+    def get_capital_status(self) -> dict:
+        """Retourne le status de l'optimisation de capital."""
+        return {
+            "enabled": self._capital_optimizer_enabled,
+            "paper_mode": self._paper_capital_manager is not None,
+            "current_capital": self._paper_capital_manager.total_equity if self._paper_capital_manager else None,
+            "last_optimized_capital": self._last_optimized_capital,
+            "last_optimization": self._last_capital_optimization.isoformat() if self._last_capital_optimization else None,
+            "change_threshold_pct": self._capital_change_threshold * 100,
+            "reoptimize_interval_sec": self._capital_reoptimize_interval,
+        }

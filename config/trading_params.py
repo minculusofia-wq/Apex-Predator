@@ -125,6 +125,44 @@ class TradingParams:
     optimizer_interval_seconds: float = 5.0   # Intervalle de mise à jour
 
     # ═══════════════════════════════════════════════════════════════
+    # DAILY LOSS LIMITS (v7.3) - Protection contre ruine
+    # Arrête automatiquement le trading si perte journalière excessive
+    # ═══════════════════════════════════════════════════════════════
+    daily_loss_limit_enabled: bool = True           # Activer limite perte journalière
+    max_daily_loss_usd: float = 100.0               # Perte max en $ par jour (stop trading si atteint)
+    max_daily_loss_percent: float = 10.0            # Perte max en % du capital total
+    daily_loss_reset_hour_utc: int = 0              # Heure UTC de reset (0 = minuit)
+    daily_loss_warning_threshold: float = 0.7       # Alerte à 70% de la limite
+    drawdown_reduction_enabled: bool = True         # Réduire taille positions après pertes
+    drawdown_reduction_threshold: float = 0.5       # Réduire à 50% de la limite atteinte
+
+    # ═══════════════════════════════════════════════════════════════
+    # PAPER TRADING MODE (v8.0)
+    # Simulation réaliste avec données de marché réelles
+    # ═══════════════════════════════════════════════════════════════
+    paper_trading_enabled: bool = False             # Mode paper trading (False = trading réel)
+    paper_starting_capital: float = 1000.0          # Capital initial virtuel en USDC
+    paper_strategy_mode: str = "both"               # Mode stratégie: "gabagool" | "smart_ape" | "both"
+
+    # Allocation capital par stratégie en mode "both" (total = 100%)
+    paper_gabagool_capital_pct: float = 60.0        # % capital alloué à Gabagool
+    paper_smart_ape_capital_pct: float = 40.0       # % capital alloué à Smart Ape
+
+    # Probabilités de fill (total = 100%)
+    paper_immediate_fill_pct: float = 70.0          # % ordres fill instantané
+    paper_delayed_fill_pct: float = 20.0            # % ordres fill en 1-5s
+    paper_timeout_pct: float = 10.0                 # % ordres timeout/partiels
+
+    # Modèle de slippage
+    paper_base_slippage_bps: float = 5.0            # Slippage de base (0.05%)
+    paper_size_impact_factor: float = 0.1           # Impact slippage par $100 de taille
+
+    # Fichiers de données paper
+    paper_trades_file: str = "data/paper_trades.json"
+    paper_positions_file: str = "data/paper_positions.json"
+    paper_stats_file: str = "data/paper_stats.json"
+
+    # ═══════════════════════════════════════════════════════════════
     # MÉTHODES DE CALCUL CAPITAL (v7.1)
     # ═══════════════════════════════════════════════════════════════
 

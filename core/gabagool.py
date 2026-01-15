@@ -108,15 +108,50 @@ class GabagoolPosition:
 
     @property
     def locked_profit(self) -> float:
-        """Profit garanti si la position est lockée."""
+        """
+        Profit garanti si la position est lockée.
+
+        IMPORTANT (v7.3): Inclut maintenant les frais Polymarket de 2%.
+        Le profit brut est réduit de 2% pour refléter le profit net réel.
+        """
         if not self.is_locked:
             return 0.0
-        # Le profit est la quantité couverte moins le coût total
+        # 7.3 FIX: Déduire les frais Polymarket (2% sur les gains)
+        POLYMARKET_FEE_RATE = 0.02
+        gross_profit = self.hedged_qty - self.total_cost
+        # Les frais sont appliqués uniquement sur les gains
+        if gross_profit > 0:
+            net_profit = gross_profit * (1 - POLYMARKET_FEE_RATE)
+        else:
+            net_profit = gross_profit  # Pas de frais sur les pertes
+        return net_profit
+
+    @property
+    def gross_profit(self) -> float:
+        """Profit brut (avant frais) pour référence."""
+        if not self.is_locked:
+            return 0.0
         return self.hedged_qty - self.total_cost
 
     def check_and_lock(self, max_pair_cost: float):
-        """Vérifie si le profit peut être locké."""
-        if self.pair_cost < max_pair_cost and self.hedged_qty > self.total_cost:
+        """
+        Vérifie si le profit peut être locké.
+
+        IMPORTANT (v7.3): Vérifie maintenant que le profit NET (après frais 2%)
+        est positif avant de locker la position.
+        """
+        POLYMARKET_FEE_RATE = 0.02
+
+        # Calculer le profit brut potentiel
+        gross_profit = self.hedged_qty - self.total_cost
+
+        # 7.3 FIX: Vérifier que le profit NET est positif après frais
+        net_profit = gross_profit * (1 - POLYMARKET_FEE_RATE) if gross_profit > 0 else gross_profit
+
+        # Conditions pour locker:
+        # 1. Le pair_cost doit être sous le seuil
+        # 2. Le profit NET doit être positif (pas juste le brut!)
+        if self.pair_cost < max_pair_cost and net_profit > 0:
             self.is_locked = True
 
     def to_dict(self) -> dict:
@@ -244,41 +279,55 @@ class GabagoolEngine:
         await asyncio.gather(*(try_redeem(mid) for mid in active_ids)) 
 
     async def _reconcile_positions(self):
-        """Réconciliation des positions partielles (Inventory Risk Management)."""
+        """
+        Réconciliation des positions partielles (Inventory Risk Management).
+
+        IMPORTANT (v7.3): Ajout de protection slippage sur les ordres MARKET.
+        """
         if not self.executor:
             return
-            
+
         async with self._lock:
             # Snapshot simple pour itérer
             items = list(self.positions.items())
 
-        threshold = 2.0 # Seuil de tolérance (shares)
-        
+        threshold = 2.0  # Seuil de tolérance (shares)
+        MAX_SLIPPAGE = 0.05  # 7.3: Max 5% de slippage sur ordres de réconciliation
+
         for market_id, pos in items:
             # Si ordres en cours, on ne touche pas (très important !)
             if pos.pending_qty_yes > 0 or pos.pending_qty_no > 0:
                 continue
-                
+
             balance = pos.qty_yes - pos.qty_no
-            
+
             if abs(balance) > threshold:
                 # Déséquilibre détecté
                 side_to_sell = "YES" if balance > 0 else "NO"
                 excess_qty = abs(balance)
 
-                print(f"⚖️ [Reconciliation] Imbalance detected on {market_id}: {pos.qty_yes:.1f} YES / {pos.qty_no:.1f} NO")
-                print(f"📉 [Reconciliation] ACTION: Selling {excess_qty:.1f} {side_to_sell} (Market Order)")
+                # 7.3 FIX: Calculer un prix minimum acceptable basé sur le slippage max
+                # Utiliser le prix moyen comme référence
+                current_avg_price = pos.avg_price_yes if side_to_sell == "YES" else pos.avg_price_no
+                min_acceptable_price = current_avg_price * (1 - MAX_SLIPPAGE)
 
-                # Envoi d'ordre MARKET pour vendre le surplus ("Neutralize to Min")
-                # price=0 n'est pas utilisé pour MARKET, mais requis par signature
+                # Ne pas vendre si le prix minimum est trop bas (protection)
+                if min_acceptable_price < 0.05:  # Floor de sécurité à $0.05
+                    print(f"⚠️ [Reconciliation] Prix trop bas pour {market_id}, skip.")
+                    continue
+
+                print(f"⚖️ [Reconciliation] Imbalance detected on {market_id}: {pos.qty_yes:.1f} YES / {pos.qty_no:.1f} NO")
+                print(f"📉 [Reconciliation] ACTION: Selling {excess_qty:.1f} {side_to_sell} @ min ${min_acceptable_price:.3f}")
+
+                # 7.3 FIX: Utiliser un ordre LIMIT au lieu de MARKET pour contrôler le slippage
                 await self.executor.queue_order(
                     token_id=pos.token_yes_id if side_to_sell == "YES" else pos.token_no_id,
                     side="SELL",
-                    price=0.0, 
+                    price=min_acceptable_price,  # Prix minimum acceptable
                     size=excess_qty,
-                    order_type="MARKET",
+                    order_type="GTC",  # Good Till Cancel avec prix limit
                     market_id=market_id,
-                    metadata={"reason": "reconciliation"}
+                    metadata={"reason": "reconciliation", "max_slippage": MAX_SLIPPAGE}
                 )
 
     @property

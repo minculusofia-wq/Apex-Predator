@@ -13,11 +13,12 @@ from datetime import datetime
 from typing import Optional
 
 from textual.app import App, ComposeResult
-from textual.containers import Container, Horizontal, Vertical, Grid
+from textual.containers import Container, Horizontal, Vertical, Grid, Center
 from textual.widgets import (
     Header, Footer, Static, Button, DataTable,
     Input, Label, Log, Rule, Sparkline, Switch
 )
+from textual.screen import ModalScreen
 from textual.binding import Binding
 from textual.reactive import reactive
 from textual import work
@@ -30,17 +31,30 @@ from core.gabagool import GabagoolEngine, GabagoolConfig
 from core.performance import get_performance_status, orderbook_cache
 from core.speculative_engine import SpeculativeEngine  # HFT: Pre-computing orders
 from core.local_orderbook import OrderbookManager  # HFT: Local orderbook mirror
+from core.paper_trading import (
+    PaperExecutor, PaperCapitalManager, PaperTradeStore, PaperReporter,
+    setup_paper_trading_with_capital, get_optimized_paper_params
+)  # Paper Trading
+from core.capital_optimizer import CapitalOptimizer  # Capital Optimization
 from api.private import PolymarketCredentials, CredentialsManager
 
 
 class GradientHeader(Static):
     """Header avec gradient."""
-    
+
     def compose(self) -> ComposeResult:
-        yield Static(
-            "🚀 POLYMARKET HFT SCALPER",
-            id="header-title"
-        )
+        params = get_trading_params()
+        if params.paper_trading_enabled:
+            yield Static(
+                "📝 POLYMARKET HFT SCALPER - PAPER TRADING MODE",
+                id="header-title",
+                classes="paper-mode"
+            )
+        else:
+            yield Static(
+                "🚀 POLYMARKET HFT SCALPER",
+                id="header-title"
+            )
 
 
 class StatusBar(Static):
@@ -304,6 +318,204 @@ class GabagoolPanel(Static):
             pass
 
 
+class PaperCapitalConfigScreen(ModalScreen):
+    """Modal pour configurer le capital paper trading."""
+
+    CSS = """
+    PaperCapitalConfigScreen {
+        align: center middle;
+    }
+
+    #config-dialog {
+        width: 70;
+        height: auto;
+        border: thick #f0883e;
+        background: #1a1a2e;
+        padding: 1 2;
+    }
+
+    #config-title {
+        width: 100%;
+        text-align: center;
+        color: #f0883e;
+        text-style: bold;
+        margin-bottom: 1;
+    }
+
+    #capital-input {
+        width: 100%;
+        margin: 1 0;
+    }
+
+    #optimized-params {
+        width: 100%;
+        height: auto;
+        max-height: 20;
+        background: #0d0d1a;
+        padding: 1;
+        margin: 1 0;
+        overflow-y: auto;
+    }
+
+    #config-buttons {
+        width: 100%;
+        height: auto;
+        margin-top: 1;
+    }
+
+    #config-buttons Button {
+        margin: 0 1;
+    }
+
+    .tier-label {
+        color: #f0883e;
+        text-style: bold;
+    }
+
+    .param-value {
+        color: #00ff88;
+    }
+    """
+
+    BINDINGS = [
+        Binding("escape", "cancel", "Annuler"),
+        Binding("enter", "apply", "Appliquer"),
+    ]
+
+    def __init__(self, current_capital: float = 1000.0):
+        super().__init__()
+        self._current_capital = current_capital
+        self._preview_params = None
+
+    def compose(self) -> ComposeResult:
+        with Container(id="config-dialog"):
+            yield Static("💰 CONFIGURATION CAPITAL PAPER", id="config-title")
+
+            yield Static("Entrez le capital pour optimiser les paramètres:")
+            yield Input(
+                placeholder="Capital en $ (ex: 500, 1000, 2500)",
+                value=str(int(self._current_capital)),
+                id="capital-input"
+            )
+
+            yield Static("", id="optimized-params")
+
+            with Horizontal(id="config-buttons"):
+                yield Button("Appliquer", variant="success", id="btn-apply")
+                yield Button("Annuler", variant="error", id="btn-cancel")
+
+    def on_mount(self) -> None:
+        self._update_preview(self._current_capital)
+        self.query_one("#capital-input", Input).focus()
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        try:
+            capital = float(event.value)
+            if capital > 0:
+                self._update_preview(capital)
+        except ValueError:
+            pass
+
+    def _update_preview(self, capital: float) -> None:
+        """Met à jour l'aperçu des paramètres optimisés."""
+        try:
+            optimizer = CapitalOptimizer(capital=capital)
+            params = optimizer.calculate_optimal_params()
+            self._preview_params = params
+
+            lines = [
+                f"[bold #f0883e]Tier: {params.tier_label.upper()}[/bold #f0883e]",
+                "",
+                "[bold]GABAGOOL[/bold]",
+                f"  Capital: [#00ff88]${params.gabagool_capital_usd:.2f}[/#00ff88]",
+                f"  Trade: [#00ff88]${params.gabagool_trade_size_usd:.2f}[/#00ff88] ({params.gabagool_trade_percent:.1f}%)",
+                f"  Max Pos: [#00ff88]{params.gabagool_max_positions}[/#00ff88]",
+                "",
+                "[bold]SMART APE[/bold]",
+                f"  Capital: [#00ff88]${params.smart_ape_capital_usd:.2f}[/#00ff88]",
+                f"  Trade: [#00ff88]${params.smart_ape_trade_size_usd:.2f}[/#00ff88] ({params.smart_ape_trade_percent:.1f}%)",
+                f"  Max Pos: [#00ff88]{params.smart_ape_max_positions}[/#00ff88]",
+                "",
+                "[bold]RISK MANAGEMENT[/bold]",
+                f"  Daily Loss Limit: [#ff6b6b]${params.max_daily_loss_usd:.2f}[/#ff6b6b] ({params.max_daily_loss_percent:.1f}%)",
+                f"  Max Exposure: [#ff6b6b]${params.max_total_exposure:.2f}[/#ff6b6b]",
+            ]
+
+            self.query_one("#optimized-params", Static).update("\n".join(lines))
+
+        except Exception as e:
+            self.query_one("#optimized-params", Static).update(f"[red]Erreur: {e}[/red]")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "btn-apply":
+            self.action_apply()
+        elif event.button.id == "btn-cancel":
+            self.action_cancel()
+
+    def action_apply(self) -> None:
+        """Applique les paramètres optimisés."""
+        try:
+            capital_str = self.query_one("#capital-input", Input).value
+            capital = float(capital_str)
+
+            if capital > 0:
+                # Utiliser setup_paper_trading_with_capital
+                setup_paper_trading_with_capital(capital)
+                self.dismiss(capital)
+        except ValueError:
+            pass
+
+    def action_cancel(self) -> None:
+        """Annule et ferme le modal."""
+        self.dismiss(None)
+
+
+class PaperTradingPanel(Static):
+    """Panneau Paper Trading - Stats de simulation."""
+
+    def compose(self) -> ComposeResult:
+        yield Static("📝 PAPER TRADING", classes="panel-title paper-title")
+        with Grid(id="paper-grid"):
+            yield StatsCard("Capital", "$1000", "💰", "paper-capital")
+            yield StatsCard("P&L", "$0.00", "📈", "paper-pnl")
+            yield StatsCard("Trades", "0", "📊", "paper-trades")
+            yield StatsCard("Win Rate", "0%", "🎯", "paper-winrate")
+        yield Static("", id="paper-details", classes="paper-details")
+
+    def update_paper_stats(self, stats: dict) -> None:
+        """Met à jour les stats paper trading."""
+        try:
+            # Capital
+            capital = stats.get("total_equity", 1000.0)
+            self.query_one("#paper-capital", Static).update(f"${capital:.2f}")
+
+            # P&L
+            pnl = stats.get("net_pnl", 0.0)
+            if pnl >= 0:
+                pnl_str = f"[green]+${pnl:.2f}[/green]"
+            else:
+                pnl_str = f"[red]-${abs(pnl):.2f}[/red]"
+            self.query_one("#paper-pnl", Static).update(pnl_str)
+
+            # Trades
+            trades = stats.get("trades_count", 0)
+            self.query_one("#paper-trades", Static).update(str(trades))
+
+            # Win Rate
+            win_rate = stats.get("win_rate", 0.0)
+            self.query_one("#paper-winrate", Static).update(f"{win_rate:.1f}%")
+
+            # Details
+            return_pct = stats.get("total_return_pct", 0.0)
+            fees = stats.get("total_fees_paid", 0.0)
+            slippage = stats.get("total_slippage_cost", 0.0)
+            details = f"Return: {return_pct:+.2f}% | Fees: ${fees:.2f} | Slip: ${slippage:.2f}"
+            self.query_one("#paper-details", Static).update(details)
+
+        except Exception:
+            pass
+
+
 class PerformancePanel(Static):
     """Panneau Performance - Métriques HFT."""
 
@@ -404,6 +616,12 @@ class HFTScalperApp(App):
         background: #0d1117;
         padding: 1;
         border: heavy #30363d;
+    }
+
+    #header-title.paper-mode {
+        color: #f0883e;
+        background: #1c1208;
+        border: heavy #9e6a03;
     }
     
     /* Status Bar */
@@ -604,6 +822,26 @@ class HFTScalperApp(App):
         grid-gutter: 1;
         height: auto;
     }
+
+    /* Paper Trading Panel */
+    #paper-grid {
+        grid-size: 2 2;
+        grid-gutter: 1;
+        height: auto;
+    }
+
+    .paper-title {
+        color: #f0883e !important;
+    }
+
+    .paper-details {
+        background: #1c1208;
+        border: solid #9e6a03;
+        padding: 1;
+        margin-top: 1;
+        color: #f0883e;
+        text-align: center;
+    }
     """
     
     BINDINGS = [
@@ -612,6 +850,7 @@ class HFTScalperApp(App):
         Binding("p", "pause", "Pause"),
         Binding("w", "wallet", "Wallet"),
         Binding("s", "start", "Start"),
+        Binding("c", "config_capital", "Capital"),
     ]
     
     def __init__(self):
@@ -629,6 +868,13 @@ class HFTScalperApp(App):
         self._speculative_engine: Optional[SpeculativeEngine] = None
         self._orderbook_manager: Optional[OrderbookManager] = None
 
+        # Paper Trading components
+        self._paper_executor: Optional[PaperExecutor] = None
+        self._paper_capital_manager: Optional[PaperCapitalManager] = None
+        self._paper_trade_store: Optional[PaperTradeStore] = None
+        self._paper_reporter: Optional[PaperReporter] = None
+        self._is_paper_mode = get_trading_params().paper_trading_enabled
+
         self._opportunities: list[Opportunity] = []
         self._is_paused = False
         self._is_running = False
@@ -643,6 +889,11 @@ class HFTScalperApp(App):
             with Vertical(id="left-panel"):
                 with Container(classes="panel"):
                     yield StatsPanel(id="stats-panel")
+
+                # Paper Trading Panel (si mode paper activé)
+                if self._is_paper_mode:
+                    with Container(classes="panel"):
+                        yield PaperTradingPanel(id="paper-panel")
 
                 with Container(classes="panel"):
                     yield GabagoolPanel(id="gabagool-panel")
@@ -664,7 +915,13 @@ class HFTScalperApp(App):
         yield Footer()
     
     def on_mount(self) -> None:
-        self._log("🚀 Bot HFT Polymarket démarré")
+        if self._is_paper_mode:
+            self._log("📝 Bot HFT Polymarket - MODE PAPER TRADING", "warning")
+            self._log("Aucun trade réel ne sera exécuté", "warning")
+            params = get_trading_params()
+            self._log(f"Capital virtuel: ${params.paper_starting_capital:.2f}", "info")
+        else:
+            self._log("🚀 Bot HFT Polymarket démarré")
         self._log("Cliquez 'Démarrer' pour lancer le scanner")
         self.set_interval(1, self._update_uptime)
     
@@ -703,11 +960,11 @@ class HFTScalperApp(App):
     async def _start_scanner(self) -> None:
         if self._is_running:
             return
-        
+
         self._log("⏳ Démarrage du scanner...", "info")
         status = self.query_one("#status-bar-widget", StatusBar)
         status.scanner_status = "🔄 Démarrage..."
-        
+
         try:
             self._order_manager = OrderManager()
             self._analyzer = OpportunityAnalyzer()
@@ -719,6 +976,26 @@ class HFTScalperApp(App):
 
             # HFT: Initialiser OrderbookManager pour miroir local
             self._orderbook_manager = OrderbookManager(max_levels=20)
+
+            # Paper Trading: Initialiser PaperExecutor si mode paper
+            if self._is_paper_mode:
+                self._paper_capital_manager = PaperCapitalManager()
+                self._paper_trade_store = PaperTradeStore()
+                self._paper_executor = PaperExecutor(
+                    orderbook_manager=self._orderbook_manager,
+                    capital_manager=self._paper_capital_manager,
+                    trade_store=self._paper_trade_store,
+                )
+                self._paper_reporter = PaperReporter(
+                    self._paper_trade_store,
+                    self._paper_capital_manager
+                )
+                await self._paper_executor.start()
+                self._log("📝 Paper Executor initialisé", "success")
+
+                # Set paper executor as the active executor for Gabagool
+                if self._gabagool:
+                    self._gabagool.set_executor(self._paper_executor)
 
             # HFT: Connecter le callback event-driven pour analyse immédiate
             self._scanner.on_immediate_analysis = self._on_immediate_opportunity
@@ -733,6 +1010,9 @@ class HFTScalperApp(App):
             self._log(f"✅ Scanner démarré - {self._scanner.market_count} marchés", "success")
             self._log("🦀 Gabagool Engine activé", "success")
             self._log("⚡ Event-driven trigger activé", "success")
+
+            if self._is_paper_mode:
+                status.wallet_status = "📝 Paper Mode"
 
             # HFT: Boucle d'analyse rapide (200ms au lieu de 2s!)
             self.set_interval(0.2, self._analyze_loop)
@@ -794,6 +1074,19 @@ class HFTScalperApp(App):
                 positions_list = self._gabagool.get_positions_summary()
                 gabagool_panel = self.query_one("#gabagool-panel", GabagoolPanel)
                 gabagool_panel.update_gabagool(gabagool_stats, positions_list)
+
+            # Mettre à jour PaperTradingPanel (si mode paper)
+            if self._is_paper_mode and self._paper_capital_manager:
+                try:
+                    paper_stats = self._paper_capital_manager.get_stats()
+                    # Ajouter win_rate depuis trade_store
+                    if self._paper_trade_store:
+                        summary = self._paper_trade_store.get_summary()
+                        paper_stats["win_rate"] = summary.get("win_rate", 0.0) * 100
+                    paper_panel = self.query_one("#paper-panel", PaperTradingPanel)
+                    paper_panel.update_paper_stats(paper_stats)
+                except Exception:
+                    pass
 
             # Mettre à jour PerformancePanel
             perf_status = get_performance_status()
@@ -1061,3 +1354,21 @@ class HFTScalperApp(App):
     
     def action_start(self) -> None:
         self._start_scanner()
+
+    def action_config_capital(self) -> None:
+        """Ouvre le modal de configuration du capital paper."""
+        if not self._is_paper_mode:
+            self._log("⚠️ Configuration capital uniquement en mode Paper", "warning")
+            return
+
+        current_capital = get_trading_params().paper_starting_capital
+
+        def on_config_result(result):
+            if result is not None:
+                self._log(f"💰 Capital configuré: ${result:.2f}", "success")
+                # Mettre à jour le PaperCapitalManager si actif
+                if self._paper_capital_manager:
+                    # Réinitialiser avec le nouveau capital
+                    self._log("🔄 Redémarrage requis pour appliquer le nouveau capital", "warning")
+
+        self.push_screen(PaperCapitalConfigScreen(current_capital), on_config_result)

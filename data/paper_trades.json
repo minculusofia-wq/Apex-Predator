@@ -1,0 +1,33 @@
+{
+  "trade_counter": 1,
+  "order_counter": 1,
+  "trades": [
+    {
+      "id": "paper_trade_000001",
+      "strategy": "gabagool",
+      "market_id": "test_market",
+      "market_question": "Test Market Question?",
+      "entry_orders": [],
+      "entry_time": null,
+      "entry_cost": 0.0,
+      "exit_orders": [],
+      "exit_time": null,
+      "exit_value": 0.0,
+      "gross_pnl": 0.0,
+      "fees": 0.0,
+      "slippage_cost": 0.0,
+      "net_pnl": 0.0,
+      "status": "open",
+      "duration_seconds": 0,
+      "avg_fill_delay_ms": 0.0,
+      "avg_slippage_bps": 0.0,
+      "fill_rate": 0.0
+    }
+  ],
+  "summary": {
+    "total_trades": 0,
+    "win_rate": 0.0,
+    "net_pnl": 0.0
+  },
+  "last_updated": "2026-01-15T12:18:57.547579"
+}

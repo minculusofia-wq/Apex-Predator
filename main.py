@@ -176,9 +176,28 @@ def main():
     import logging
     level = logging.DEBUG if args.debug else logging.INFO
     setup_logging(level=level, log_file=args.log_file)
-    
+
+    # Vérifier le mode paper trading
+    params = get_trading_params()
+    is_paper_mode = params.paper_trading_enabled
+
     # Afficher la bannière
-    print("""
+    if is_paper_mode:
+        print("""
+╔═══════════════════════════════════════════════════════════════╗
+║                                                               ║
+║   📝 HFT SCALPER BOT - PAPER TRADING MODE                    ║
+║                                                               ║
+║   Simulation réaliste avec données de marché réelles         ║
+║   Aucun trade réel ne sera exécuté                           ║
+║                                                               ║
+╚═══════════════════════════════════════════════════════════════╝
+        """)
+        print(f"   Capital virtuel: ${params.paper_starting_capital:.2f}")
+        print(f"   Fills: {params.paper_immediate_fill_pct:.0f}% immédiat, {params.paper_delayed_fill_pct:.0f}% différé, {params.paper_timeout_pct:.0f}% timeout")
+        print()
+    else:
+        print("""
 ╔═══════════════════════════════════════════════════════════════╗
 ║                                                               ║
 ║   🚀 HFT SCALPER BOT - POLYMARKET                            ║
@@ -187,7 +206,7 @@ def main():
 ║   BTC • SOL • ETH • XRP                                      ║
 ║                                                               ║
 ╚═══════════════════════════════════════════════════════════════╝
-    """)
+        """)
     
     if args.cli:
         # Mode CLI

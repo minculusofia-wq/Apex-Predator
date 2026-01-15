@@ -1410,11 +1410,15 @@ async def get_performance():
 @app.get("/api/health")
 async def health_check():
     """
-    Health check endpoint pour monitoring.
+    Health check endpoint pour monitoring (v7.3 amélioré).
 
-    Retourne le statut de santé de tous les composants.
+    Retourne le statut de santé de tous les composants incluant:
+    - Scanner, Gabagool, Smart Ape, Executor
+    - Daily Loss Manager status
+    - Orphaned orders count
+    - Rate limiter stats
     """
-    global scanner, gabagool_engine, executor
+    global scanner, gabagool_engine, smart_ape_engine, executor
 
     health_checker = get_health_checker()
 
@@ -1431,16 +1435,55 @@ async def health_check():
             return ComponentHealth("gabagool", "healthy", "Running")
         return ComponentHealth("gabagool", "unhealthy", "Not running")
 
+    def smart_ape_health() -> ComponentHealth:
+        if smart_ape_engine and smart_ape_engine._is_running:
+            return ComponentHealth("smart_ape", "healthy", "Running")
+        return ComponentHealth("smart_ape", "unhealthy", "Not running")
+
     def executor_health() -> ComponentHealth:
         if executor:
+            # 7.3: Vérifier aussi le daily loss status
+            daily_summary = executor.get_daily_loss_summary()
+            if daily_summary.get("status") == "blocked":
+                return ComponentHealth("executor", "degraded", f"Blocked: Daily loss limit reached")
+            elif daily_summary.get("status") == "warning":
+                return ComponentHealth("executor", "degraded", f"Warning: Approaching daily loss limit")
             return ComponentHealth("executor", "healthy", "Ready")
         return ComponentHealth("executor", "unhealthy", "Not initialized")
 
+    def daily_loss_health() -> ComponentHealth:
+        if executor:
+            summary = executor.get_daily_loss_summary()
+            status = summary.get("status", "disabled")
+            if status == "blocked":
+                return ComponentHealth("daily_loss", "unhealthy", f"BLOCKED: ${summary.get('current_loss', 0):.2f} loss")
+            elif status == "warning":
+                return ComponentHealth("daily_loss", "degraded", f"Warning: {summary.get('loss_percentage', 0):.1f}% of limit")
+            elif status == "reduced":
+                return ComponentHealth("daily_loss", "degraded", f"Reduced sizing: {summary.get('position_multiplier', 1):.2f}x")
+            elif status == "normal":
+                return ComponentHealth("daily_loss", "healthy", f"PnL: ${summary.get('current_pnl', 0):+.2f}")
+            return ComponentHealth("daily_loss", "healthy", "Disabled")
+        return ComponentHealth("daily_loss", "healthy", "Not initialized")
+
     health_checker.register_component("scanner", scanner_health)
     health_checker.register_component("gabagool", gabagool_health)
+    health_checker.register_component("smart_ape", smart_ape_health)
     health_checker.register_component("executor", executor_health)
+    health_checker.register_component("daily_loss", daily_loss_health)
 
-    return health_checker.check_all()
+    # Récupérer le health check de base
+    result = health_checker.check_all()
+
+    # 7.3: Ajouter des infos supplémentaires
+    result["extended"] = {
+        "orphaned_orders": len(executor._orphaned_orders) if executor else 0,
+        "daily_loss_summary": executor.get_daily_loss_summary() if executor else None,
+        "uptime_seconds": (datetime.now() - start_time).total_seconds(),
+        "version": "7.3"
+    }
+
+    return result
 
 
 @app.get("/api/metrics")
