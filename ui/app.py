@@ -598,12 +598,12 @@ class ControlPanel(Static):
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="control-buttons"):
-            yield Button("▶️ Démarrer", id="btn-start", variant="success")
-            yield Button("⏸️ Pause", id="btn-pause", variant="warning")
+            yield Button("▶ Start", id="btn-start", variant="success")
+            yield Button("⏸ Pause", id="btn-pause", variant="warning")
             yield Button("💳 Wallet", id="btn-wallet", variant="primary")
             yield Button("🔄 Refresh", id="btn-refresh", variant="default")
-            # Toggle Paper Trading
-            paper_label = "📝 Paper: ON" if self._is_paper_mode else "📝 Paper: OFF"
+            # Toggle Paper Trading - bouton visible avec bordure orange
+            paper_label = "📝 ON" if self._is_paper_mode else "📝 OFF"
             paper_variant = "success" if self._is_paper_mode else "default"
             yield Button(paper_label, id="btn-paper-toggle", variant=paper_variant)
 
@@ -784,26 +784,29 @@ class HFTScalperApp(App):
         border: solid #30363d;
         width: 100%;
         height: auto;
+        overflow: hidden;
     }
 
     #control-buttons Button {
         margin: 0 1;
-        min-width: 12;
+        min-width: 10;
+        max-width: 18;
     }
 
-    /* Paper Toggle Button */
+    /* Paper Toggle Button - highlighted */
     #btn-paper-toggle {
-        min-width: 14;
+        min-width: 13;
+        border: solid #f0883e;
     }
 
-    #btn-paper-toggle.paper-on {
+    #btn-paper-toggle.-success {
         background: #238636;
         border: solid #3fb950;
     }
 
     /* Buttons */
     Button {
-        min-width: 12;
+        min-width: 10;
     }
     
     Button.-primary {
@@ -1222,10 +1225,10 @@ class HFTScalperApp(App):
         try:
             btn = self.query_one("#btn-paper-toggle", Button)
             if self._is_paper_mode:
-                btn.label = "📝 Paper: ON"
+                btn.label = "📝 ON"
                 btn.variant = "success"
             else:
-                btn.label = "📝 Paper: OFF"
+                btn.label = "📝 OFF"
                 btn.variant = "default"
         except Exception:
             pass
