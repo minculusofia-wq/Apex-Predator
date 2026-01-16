@@ -16,7 +16,8 @@ from textual.app import App, ComposeResult
 from textual.containers import Container, Horizontal, Vertical, Grid, Center
 from textual.widgets import (
     Header, Footer, Static, Button, DataTable,
-    Input, Label, Log, Rule, Sparkline, Switch
+    Input, Label, Log, Rule, Sparkline, Switch,
+    RadioButton, RadioSet
 )
 from textual.screen import ModalScreen
 from textual.binding import Binding
@@ -470,6 +471,183 @@ class PaperCapitalConfigScreen(ModalScreen):
         self.dismiss(None)
 
 
+class PaperConfigModal(ModalScreen):
+    """Modal complet pour configurer le Paper Trading avec optimizer."""
+
+    CSS = """
+    PaperConfigModal {
+        align: center middle;
+    }
+    #paper-config-dialog {
+        width: 70;
+        height: auto;
+        max-height: 35;
+        border: thick #f0883e;
+        background: #1a1a2e;
+        padding: 1 2;
+    }
+    #paper-config-title {
+        text-align: center;
+        color: #f0883e;
+        text-style: bold;
+        margin-bottom: 1;
+    }
+    .config-section {
+        margin: 1 0;
+        height: auto;
+    }
+    .config-section-label {
+        color: #8b949e;
+        margin-bottom: 0;
+    }
+    #optimized-preview {
+        background: #0d0d1a;
+        padding: 1;
+        margin: 1 0;
+        min-height: 8;
+        border: solid #30363d;
+    }
+    #paper-config-buttons {
+        margin-top: 1;
+        height: auto;
+    }
+    #paper-config-buttons Button {
+        margin: 0 1;
+    }
+    #mode-radio {
+        height: auto;
+        margin: 0;
+    }
+    #input-paper-capital {
+        width: 100%;
+    }
+    """
+
+    BINDINGS = [
+        Binding("escape", "cancel", "Annuler"),
+        Binding("enter", "apply", "Appliquer"),
+    ]
+
+    def __init__(self, current_capital: float = 500.0, current_mode: str = "both"):
+        super().__init__()
+        self._capital = current_capital
+        self._mode = current_mode
+
+    def compose(self) -> ComposeResult:
+        with Container(id="paper-config-dialog"):
+            yield Static("⚙️ CONFIGURATION PAPER TRADING", id="paper-config-title")
+
+            # Section Capital
+            with Vertical(classes="config-section"):
+                yield Label("💰 Capital ($)", classes="config-section-label")
+                yield Input(value=str(int(self._capital)), id="input-paper-capital")
+
+            # Section Mode Stratégie
+            with Vertical(classes="config-section"):
+                yield Label("📊 Mode Stratégie", classes="config-section-label")
+                yield RadioSet(
+                    RadioButton("Gabagool Only", id="radio-gabagool"),
+                    RadioButton("Smart Ape Only", id="radio-smart_ape"),
+                    RadioButton("Both Strategies", id="radio-both", value=True),
+                    id="mode-radio"
+                )
+
+            # Preview des paramètres optimisés
+            yield Label("📋 PARAMÈTRES OPTIMISÉS:", classes="config-section-label")
+            yield Static("", id="optimized-preview")
+
+            # Boutons
+            with Horizontal(id="paper-config-buttons"):
+                yield Button("✅ Appliquer", variant="success", id="btn-config-apply")
+                yield Button("❌ Annuler", variant="error", id="btn-config-cancel")
+
+    def on_mount(self) -> None:
+        self._update_preview()
+        # Sélectionner le bon radio selon current_mode
+        try:
+            radio_id = f"#radio-{self._mode}"
+            radio = self.query_one(radio_id, RadioButton)
+            radio.value = True
+        except Exception:
+            pass
+        self.query_one("#input-paper-capital", Input).focus()
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id == "input-paper-capital":
+            try:
+                self._capital = float(event.value)
+                if self._capital > 0:
+                    self._update_preview()
+            except ValueError:
+                pass
+
+    def on_radio_set_changed(self, event: RadioSet.Changed) -> None:
+        # Extraire le mode depuis l'ID du RadioButton
+        if event.pressed and event.pressed.id:
+            self._mode = event.pressed.id.replace("radio-", "")
+            self._update_preview()
+
+    def _update_preview(self) -> None:
+        """Met à jour l'aperçu des paramètres optimisés."""
+        try:
+            optimizer = CapitalOptimizer(capital=self._capital)
+            params = optimizer.calculate_optimal_params(strategy_mode=self._mode)
+
+            lines = [
+                f"[bold #f0883e]Tier: {params.tier_label.upper()}[/bold #f0883e]",
+                "",
+            ]
+
+            if self._mode in ("gabagool", "both"):
+                lines.extend([
+                    "[cyan]GABAGOOL[/cyan]",
+                    f"  Capital: ${params.gabagool_capital_usd:.0f}",
+                    f"  Trade: ${params.gabagool_trade_size_usd:.2f} ({params.gabagool_trade_percent:.1f}%)",
+                    f"  Max Positions: {params.gabagool_max_positions}",
+                ])
+
+            if self._mode in ("smart_ape", "both"):
+                lines.extend([
+                    "[magenta]SMART APE[/magenta]",
+                    f"  Capital: ${params.smart_ape_capital_usd:.0f}",
+                    f"  Trade: ${params.smart_ape_trade_size_usd:.2f} ({params.smart_ape_trade_percent:.1f}%)",
+                    f"  Max Positions: {params.smart_ape_max_positions}",
+                ])
+
+            lines.extend([
+                "",
+                f"[red]Daily Loss Limit: ${params.max_daily_loss_usd:.0f} ({params.max_daily_loss_percent:.1f}%)[/red]",
+            ])
+
+            self.query_one("#optimized-preview", Static).update("\n".join(lines))
+
+        except Exception as e:
+            self.query_one("#optimized-preview", Static).update(f"[red]Erreur: {e}[/red]")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "btn-config-apply":
+            self._apply_config()
+        elif event.button.id == "btn-config-cancel":
+            self.dismiss(None)
+
+    def _apply_config(self) -> None:
+        """Applique la configuration."""
+        try:
+            setup_paper_trading_with_capital(
+                capital=self._capital,
+                strategy_mode=self._mode
+            )
+            self.dismiss((self._capital, self._mode))
+        except Exception:
+            self.dismiss(None)
+
+    def action_apply(self) -> None:
+        self._apply_config()
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
 class PaperTradingPanel(Static):
     """Panneau Paper Trading - Stats de simulation."""
 
@@ -590,22 +768,32 @@ class ActivityPanel(Static):
 
 
 class ControlPanel(Static):
-    """Panneau de contrôle."""
+    """Panneau de contrôle avec barre Paper Trading dédiée."""
 
-    def __init__(self, is_paper_mode: bool = False, **kwargs):
+    def __init__(self, is_paper_mode: bool = False, paper_capital: float = 500.0, strategy_mode: str = "both", **kwargs):
         super().__init__(**kwargs)
         self._is_paper_mode = is_paper_mode
+        self._paper_capital = paper_capital
+        self._strategy_mode = strategy_mode
 
     def compose(self) -> ComposeResult:
+        # Ligne 1: Barre Paper Trading dédiée (toujours visible)
+        paper_class = "" if self._is_paper_mode else "paper-off"
+        with Horizontal(id="paper-mode-bar", classes=paper_class):
+            yield Static("📝 PAPER:", id="paper-label")
+            paper_variant = "success" if self._is_paper_mode else "error"
+            paper_text = "ON" if self._is_paper_mode else "OFF"
+            yield Button(paper_text, id="btn-paper-toggle", variant=paper_variant)
+            yield Static(f"${self._paper_capital:.0f}", id="paper-capital-display")
+            yield Static(f"{self._strategy_mode.upper()}", id="paper-mode-display")
+            yield Button("⚙️", id="btn-paper-config", variant="default")
+
+        # Ligne 2: Boutons de contrôle principaux
         with Horizontal(id="control-buttons"):
             yield Button("▶ Start", id="btn-start", variant="success")
             yield Button("⏸ Pause", id="btn-pause", variant="warning")
             yield Button("💳 Wallet", id="btn-wallet", variant="primary")
             yield Button("🔄 Refresh", id="btn-refresh", variant="default")
-            # Toggle Paper Trading - bouton visible avec bordure orange
-            paper_label = "📝 ON" if self._is_paper_mode else "📝 OFF"
-            paper_variant = "success" if self._is_paper_mode else "default"
-            yield Button(paper_label, id="btn-paper-toggle", variant=paper_variant)
 
 
 class HFTScalperApp(App):
@@ -771,13 +959,80 @@ class HFTScalperApp(App):
         min-height: 8;
     }
     
-    /* Control Panel */
+    /* Control Panel - Hauteur fixe pour 2 lignes */
     #control-panel {
         dock: bottom;
-        height: auto;
+        height: 9;
+        width: 100%;
+        min-height: 9;
+    }
+
+    /* Paper Mode Bar - Ligne dédiée (v8.2) */
+    #paper-mode-bar {
+        background: #1c1208;
+        border: solid #9e6a03;
+        padding: 0 1;
+        height: 3;
         width: 100%;
     }
 
+    #paper-mode-bar.paper-off {
+        background: #161b22;
+        border: solid #30363d;
+    }
+
+    #paper-label {
+        color: #f0883e;
+        padding: 1 1;
+        text-style: bold;
+        width: auto;
+    }
+
+    #paper-mode-bar.paper-off #paper-label {
+        color: #8b949e;
+    }
+
+    #paper-capital-display {
+        color: #8b949e;
+        padding: 1 2;
+        width: auto;
+    }
+
+    #paper-mode-display {
+        color: #8b949e;
+        padding: 1 2;
+        width: auto;
+    }
+
+    #btn-paper-toggle {
+        min-width: 6;
+        max-width: 8;
+        margin: 0 1;
+    }
+
+    #btn-paper-toggle.-success {
+        background: #238636;
+        border: solid #3fb950;
+    }
+
+    #btn-paper-toggle.-error {
+        background: #da3633;
+        border: solid #f85149;
+    }
+
+    #btn-paper-config {
+        min-width: 4;
+        max-width: 6;
+        margin: 0 1;
+        background: #30363d;
+        border: solid #484f58;
+    }
+
+    #btn-paper-config:hover {
+        background: #484f58;
+    }
+
+    /* Control Buttons Row */
     #control-buttons {
         padding: 1;
         background: #161b22;
@@ -791,17 +1046,6 @@ class HFTScalperApp(App):
         margin: 0 1;
         min-width: 10;
         max-width: 18;
-    }
-
-    /* Paper Toggle Button - highlighted */
-    #btn-paper-toggle {
-        min-width: 13;
-        border: solid #f0883e;
-    }
-
-    #btn-paper-toggle.-success {
-        background: #238636;
-        border: solid #3fb950;
     }
 
     /* Buttons */
@@ -940,7 +1184,13 @@ class HFTScalperApp(App):
                 with Container(classes="panel"):
                     yield ActivityPanel(id="activity-panel")
 
-        yield ControlPanel(id="control-panel", is_paper_mode=self._is_paper_mode)
+        params = get_trading_params()
+        yield ControlPanel(
+            id="control-panel",
+            is_paper_mode=self._is_paper_mode,
+            paper_capital=params.paper_starting_capital,
+            strategy_mode=params.paper_strategy_mode,
+        )
         yield Footer()
     
     def on_mount(self) -> None:
@@ -994,7 +1244,9 @@ class HFTScalperApp(App):
             self._reset_config()
         elif btn_id == "btn-paper-toggle":
             await self._toggle_paper_mode()
-    
+        elif btn_id == "btn-paper-config":
+            await self._open_paper_config()
+
     @work(exclusive=True)
     async def _start_scanner(self) -> None:
         if self._is_running:
@@ -1221,15 +1473,18 @@ class HFTScalperApp(App):
         # Toggle le mode
         self._is_paper_mode = not self._is_paper_mode
 
-        # Mettre à jour le bouton
+        # Mettre à jour le bouton et la barre Paper
         try:
             btn = self.query_one("#btn-paper-toggle", Button)
+            bar = self.query_one("#paper-mode-bar")
             if self._is_paper_mode:
-                btn.label = "📝 ON"
+                btn.label = "ON"
                 btn.variant = "success"
+                bar.remove_class("paper-off")
             else:
-                btn.label = "📝 OFF"
-                btn.variant = "default"
+                btn.label = "OFF"
+                btn.variant = "error"
+                bar.add_class("paper-off")
         except Exception:
             pass
 
@@ -1301,7 +1556,34 @@ class HFTScalperApp(App):
         params = get_trading_params()
         params.paper_trading_enabled = self._is_paper_mode
         update_trading_params(params)
-    
+
+    async def _open_paper_config(self) -> None:
+        """Ouvre le modal de configuration Paper Trading."""
+        params = get_trading_params()
+
+        def on_config_result(result):
+            if result is not None:
+                capital, mode = result
+                self._log(f"💰 Config appliquée: ${capital:.0f} | Mode: {mode.upper()}", "success")
+                # Mettre à jour l'affichage dans la barre Paper
+                try:
+                    self.query_one("#paper-capital-display", Static).update(f"${capital:.0f}")
+                    self.query_one("#paper-mode-display", Static).update(mode.upper())
+                except Exception:
+                    pass
+
+                # Si le scanner est en cours, réinitialiser le paper capital manager
+                if self._is_running and self._paper_capital_manager:
+                    self._log("🔄 Redémarrage requis pour appliquer le nouveau capital", "warning")
+
+        self.push_screen(
+            PaperConfigModal(
+                current_capital=params.paper_starting_capital,
+                current_mode=params.paper_strategy_mode
+            ),
+            on_config_result
+        )
+
     async def _connect_wallet(self) -> None:
         self._log("💳 Connexion wallet...", "info")
         self._log("Voir le terminal pour entrer vos credentials", "warning")

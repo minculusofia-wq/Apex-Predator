@@ -637,6 +637,79 @@
                 </div>
             </div>
 
+            <!-- Paper Trading Panel (v8.2) -->
+            <div class="panel" style="margin-bottom: 1rem;" id="paper-panel">
+                <div class="panel-header" style="background: linear-gradient(135deg, #92400e, #78350f);">
+                    📝 Paper Trading
+                    <span id="paper-status-badge" style="font-size: 0.75rem; padding: 2px 8px; border-radius: 4px; background: #dc2626; color: white;">OFF</span>
+                </div>
+                <div class="panel-content">
+                    <!-- Toggle ON/OFF -->
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; padding-bottom: 0.75rem; border-bottom: 1px solid var(--border-color);">
+                        <span style="font-weight: 600; color: #f59e0b;">Mode Paper</span>
+                        <button class="btn btn-sm" id="btn-paper-toggle" onclick="togglePaperMode()" style="min-width: 60px;">
+                            OFF
+                        </button>
+                    </div>
+
+                    <!-- Capital Config -->
+                    <div class="config-group">
+                        <label>💰 Capital ($)</label>
+                        <input type="number" id="paper-capital" step="100" value="500" min="50" max="100000">
+                    </div>
+
+                    <!-- Strategy Mode -->
+                    <div class="config-group">
+                        <label>📊 Mode Stratégie</label>
+                        <select id="paper-strategy-mode" style="width: 100%; padding: 0.5rem; background: var(--bg-primary); border: 1px solid var(--border-color); border-radius: 4px; color: var(--text-primary);">
+                            <option value="both">Both (Gabagool + Smart Ape)</option>
+                            <option value="gabagool">Gabagool Only</option>
+                            <option value="smart_ape">Smart Ape Only</option>
+                        </select>
+                    </div>
+
+                    <!-- Optimized Params Preview -->
+                    <div id="paper-optimized-preview" style="font-size: 0.75rem; padding: 0.5rem; background: var(--bg-primary); border-radius: 4px; margin: 0.5rem 0; display: none;">
+                        <div style="color: #f59e0b; font-weight: 600; margin-bottom: 0.25rem;" id="paper-tier">TIER: --</div>
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem;">
+                            <div>
+                                <div style="color: #06b6d4; font-weight: 500;">Gabagool</div>
+                                <div style="color: var(--text-secondary);">Trade: <span id="paper-gab-trade" class="mono">$--</span></div>
+                                <div style="color: var(--text-secondary);">Max Pos: <span id="paper-gab-pos" class="mono">--</span></div>
+                            </div>
+                            <div>
+                                <div style="color: #a855f7; font-weight: 500;">Smart Ape</div>
+                                <div style="color: var(--text-secondary);">Trade: <span id="paper-ape-trade" class="mono">$--</span></div>
+                                <div style="color: var(--text-secondary);">Max Pos: <span id="paper-ape-pos" class="mono">--</span></div>
+                            </div>
+                        </div>
+                        <div style="color: #ef4444; margin-top: 0.25rem;">Daily Limit: <span id="paper-daily-limit" class="mono">$--</span></div>
+                    </div>
+
+                    <!-- Stats -->
+                    <div style="font-size: 0.75rem; padding: 0.5rem; background: var(--bg-primary); border-radius: 4px; margin-bottom: 0.5rem;">
+                        <div style="display: flex; justify-content: space-between; margin-bottom: 0.25rem;">
+                            <span style="color: var(--text-secondary);">Balance</span>
+                            <span id="paper-balance" class="mono" style="color: var(--accent-green);">$500.00</span>
+                        </div>
+                        <div style="display: flex; justify-content: space-between; margin-bottom: 0.25rem;">
+                            <span style="color: var(--text-secondary);">P&L</span>
+                            <span id="paper-pnl" class="mono">$0.00</span>
+                        </div>
+                        <div style="display: flex; justify-content: space-between;">
+                            <span style="color: var(--text-secondary);">Trades</span>
+                            <span id="paper-trades-count" class="mono">0</span>
+                        </div>
+                    </div>
+
+                    <!-- Buttons -->
+                    <div class="btn-group" style="display: flex; gap: 0.5rem;">
+                        <button class="btn btn-primary btn-sm" onclick="applyPaperConfig()" style="flex: 1; justify-content: center;">💾 Appliquer</button>
+                        <button class="btn btn-danger btn-sm" onclick="resetPaperTrading()" style="flex: 1; justify-content: center;">🔄 Reset</button>
+                    </div>
+                </div>
+            </div>
+
             <!-- Auto-Optimizer -->
             <div class="panel" style="margin-bottom: 1rem;">
                 <div class="panel-header">
@@ -1551,6 +1624,163 @@
             fetchKellyStats();
             // Refresh Kelly stats every 30 seconds
             setInterval(fetchKellyStats, 30000);
+        });
+
+        // ═══════════════════════════════════════════════════════════════════════════════
+        // PAPER TRADING (v8.2)
+        // ═══════════════════════════════════════════════════════════════════════════════
+
+        let paperEnabled = false;
+
+        async function fetchPaperStatus() {
+            try {
+                const res = await fetch('/api/paper/status');
+                const data = await res.json();
+
+                paperEnabled = data.enabled;
+
+                // Update toggle button
+                const btn = document.getElementById('btn-paper-toggle');
+                const badge = document.getElementById('paper-status-badge');
+
+                if (data.enabled) {
+                    btn.innerText = 'ON';
+                    btn.className = 'btn btn-sm btn-success';
+                    badge.innerText = 'ON';
+                    badge.style.background = '#16a34a';
+                } else {
+                    btn.innerText = 'OFF';
+                    btn.className = 'btn btn-sm btn-danger';
+                    badge.innerText = 'OFF';
+                    badge.style.background = '#dc2626';
+                }
+
+                // Update config fields
+                document.getElementById('paper-capital').value = data.capital || 500;
+                document.getElementById('paper-strategy-mode').value = data.strategy_mode || 'both';
+
+                // Update stats
+                document.getElementById('paper-balance').innerText = `$${(data.balance || 0).toFixed(2)}`;
+
+                const pnl = data.realized_pnl || 0;
+                const pnlEl = document.getElementById('paper-pnl');
+                pnlEl.innerText = `$${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}`;
+                pnlEl.style.color = pnl >= 0 ? 'var(--accent-green)' : 'var(--accent-red)';
+
+                document.getElementById('paper-trades-count').innerText = data.trades_count || 0;
+
+                // Update optimized params preview
+                updateOptimizedPreview(data.capital, data.strategy_mode);
+
+            } catch (e) {
+                console.error('Paper status error:', e);
+            }
+        }
+
+        async function togglePaperMode() {
+            try {
+                const res = await fetch('/api/paper/toggle', { method: 'POST' });
+                const data = await res.json();
+
+                if (data.success) {
+                    showToast(data.message, data.enabled ? 'success' : 'warning');
+                    fetchPaperStatus();
+                }
+            } catch (e) {
+                console.error('Toggle paper error:', e);
+            }
+        }
+
+        async function applyPaperConfig() {
+            const capital = parseFloat(document.getElementById('paper-capital').value) || 500;
+            const strategyMode = document.getElementById('paper-strategy-mode').value;
+
+            try {
+                const res = await fetch('/api/paper/config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ capital, strategy_mode: strategyMode })
+                });
+                const data = await res.json();
+
+                if (data.success) {
+                    showToast(data.message, 'success');
+                    fetchPaperStatus();
+                } else {
+                    showToast('Erreur: ' + data.error, 'warning');
+                }
+            } catch (e) {
+                console.error('Apply paper config error:', e);
+            }
+        }
+
+        async function resetPaperTrading() {
+            if (!confirm('Voulez-vous vraiment remettre à zéro le paper trading? Toutes les stats seront effacées.')) {
+                return;
+            }
+
+            try {
+                const res = await fetch('/api/paper/reset', { method: 'POST' });
+                const data = await res.json();
+
+                if (data.success) {
+                    showToast(data.message, 'success');
+                    fetchPaperStatus();
+                }
+            } catch (e) {
+                console.error('Reset paper error:', e);
+            }
+        }
+
+        async function updateOptimizedPreview(capital, strategyMode) {
+            try {
+                const res = await fetch(`/api/paper/optimized-params?capital=${capital}&strategy_mode=${strategyMode}`);
+                const data = await res.json();
+
+                if (data.error) {
+                    document.getElementById('paper-optimized-preview').style.display = 'none';
+                    return;
+                }
+
+                document.getElementById('paper-optimized-preview').style.display = 'block';
+                document.getElementById('paper-tier').innerText = `TIER: ${data.tier.toUpperCase()}`;
+
+                if (data.gabagool) {
+                    document.getElementById('paper-gab-trade').innerText = `$${data.gabagool.trade_size.toFixed(2)}`;
+                    document.getElementById('paper-gab-pos').innerText = data.gabagool.max_positions;
+                }
+
+                if (data.smart_ape) {
+                    document.getElementById('paper-ape-trade').innerText = `$${data.smart_ape.trade_size.toFixed(2)}`;
+                    document.getElementById('paper-ape-pos').innerText = data.smart_ape.max_positions;
+                }
+
+                if (data.risk) {
+                    document.getElementById('paper-daily-limit').innerText = `$${data.risk.daily_loss_limit.toFixed(0)}`;
+                }
+            } catch (e) {
+                console.error('Optimized params error:', e);
+            }
+        }
+
+        // Update preview when capital or mode changes
+        document.getElementById('paper-capital').addEventListener('change', () => {
+            const capital = parseFloat(document.getElementById('paper-capital').value) || 500;
+            const mode = document.getElementById('paper-strategy-mode').value;
+            updateOptimizedPreview(capital, mode);
+        });
+
+        document.getElementById('paper-strategy-mode').addEventListener('change', () => {
+            const capital = parseFloat(document.getElementById('paper-capital').value) || 500;
+            const mode = document.getElementById('paper-strategy-mode').value;
+            updateOptimizedPreview(capital, mode);
+        });
+
+        // Init paper trading on load
+        document.addEventListener('DOMContentLoaded', () => {
+            fetchPaperStatus();
+            // Refresh every 10 seconds
+            setInterval(fetchPaperStatus, 10000);
         });
     </script>
 </body>

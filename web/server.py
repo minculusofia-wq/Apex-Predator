@@ -1513,6 +1513,148 @@ async def reset_metrics():
     return {"success": True, "message": "Metrics reset"}
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# PAPER TRADING API (v8.2)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.get("/api/paper/status")
+async def get_paper_status():
+    """Retourne le statut du paper trading."""
+    params = get_trading_params()
+
+    # Charger les stats paper si disponibles
+    stats_file = Path("data/paper_stats.json")
+    stats = {}
+    if stats_file.exists():
+        import json
+        stats = json.loads(stats_file.read_text())
+
+    return {
+        "enabled": params.paper_trading_enabled,
+        "capital": params.paper_starting_capital,
+        "strategy_mode": params.paper_strategy_mode,
+        "balance": stats.get("balance", params.paper_starting_capital),
+        "realized_pnl": stats.get("realized_pnl", 0.0),
+        "trades_count": stats.get("trades_count", 0),
+        "total_fees": stats.get("total_fees_paid", 0.0),
+    }
+
+
+@app.post("/api/paper/toggle")
+async def toggle_paper_mode():
+    """Active/désactive le paper trading."""
+    params = get_trading_params()
+    params.paper_trading_enabled = not params.paper_trading_enabled
+    update_trading_params(params)
+
+    status = "activé" if params.paper_trading_enabled else "désactivé"
+    return {
+        "success": True,
+        "enabled": params.paper_trading_enabled,
+        "message": f"Paper trading {status}"
+    }
+
+
+class PaperConfigRequest(BaseModel):
+    capital: float = 500.0
+    strategy_mode: str = "both"
+
+
+@app.post("/api/paper/config")
+async def update_paper_config(config: PaperConfigRequest):
+    """Met à jour la configuration paper trading."""
+    from core.paper_trading import setup_paper_trading_with_capital
+
+    try:
+        setup_paper_trading_with_capital(
+            capital=config.capital,
+            strategy_mode=config.strategy_mode
+        )
+        return {
+            "success": True,
+            "capital": config.capital,
+            "strategy_mode": config.strategy_mode,
+            "message": f"Paper trading configuré: ${config.capital:.0f} | Mode: {config.strategy_mode}"
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/api/paper/reset")
+async def reset_paper_trading():
+    """Remet à zéro le paper trading."""
+    import json
+    from datetime import datetime
+
+    params = get_trading_params()
+    capital = params.paper_starting_capital
+
+    # Reset stats
+    stats_file = Path("data/paper_stats.json")
+    stats_file.parent.mkdir(parents=True, exist_ok=True)
+    stats = {
+        "starting_capital": capital,
+        "balance": capital,
+        "allocated": {},
+        "unrealized_pnl": {},
+        "realized_pnl": 0.0,
+        "total_fees_paid": 0.0,
+        "total_slippage_cost": 0.0,
+        "trades_count": 0,
+        "last_updated": datetime.now().isoformat()
+    }
+    stats_file.write_text(json.dumps(stats, indent=2))
+
+    # Reset trades
+    trades_file = Path("data/paper_trades.json")
+    trades = {
+        "trade_counter": 0,
+        "order_counter": 0,
+        "trades": [],
+        "summary": {"total_trades": 0, "win_rate": 0.0, "net_pnl": 0.0},
+        "last_updated": datetime.now().isoformat()
+    }
+    trades_file.write_text(json.dumps(trades, indent=2))
+
+    return {
+        "success": True,
+        "capital": capital,
+        "message": f"Paper trading reset avec ${capital:.0f}"
+    }
+
+
+@app.get("/api/paper/optimized-params")
+async def get_optimized_params(capital: float = 500.0, strategy_mode: str = "both"):
+    """Retourne les paramètres optimisés pour un capital donné."""
+    from core.capital_optimizer import CapitalOptimizer
+
+    try:
+        optimizer = CapitalOptimizer(capital=capital)
+        params = optimizer.calculate_optimal_params(strategy_mode=strategy_mode)
+
+        return {
+            "tier": params.tier_label,
+            "gabagool": {
+                "capital": params.gabagool_capital_usd,
+                "trade_size": params.gabagool_trade_size_usd,
+                "trade_percent": params.gabagool_trade_percent,
+                "max_positions": params.gabagool_max_positions,
+            },
+            "smart_ape": {
+                "capital": params.smart_ape_capital_usd,
+                "trade_size": params.smart_ape_trade_size_usd,
+                "trade_percent": params.smart_ape_trade_percent,
+                "max_positions": params.smart_ape_max_positions,
+            },
+            "risk": {
+                "daily_loss_limit": params.max_daily_loss_usd,
+                "daily_loss_percent": params.max_daily_loss_percent,
+            }
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
 if __name__ == "__main__":
     import uvicorn
 
