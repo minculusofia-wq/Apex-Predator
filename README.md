@@ -46,6 +46,7 @@ where:
 | **Health Check API** | `/api/health` for external monitoring |
 | **Metrics Tracking** | Trades, profit, latency with JSON persistence |
 | **Graceful Shutdown** | Clean exit on SIGINT/SIGTERM |
+| **Scanner Robustness** | Strict timeouts (15s startup) & auto-recovery |
 
 ### HFT Performance (v5.0)
 **Latency reduced from 2000-4000ms to 200-500ms** (4-20x faster)
