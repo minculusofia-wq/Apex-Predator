@@ -199,11 +199,21 @@ class MarketScanner:
             await self._polymarket_client.__aenter__()
             await self._gamma_client.__aenter__()
 
-            # Charger les marchés initiaux
-            await self._load_markets()
+            # Charger les marchés initiaux (avec timeout global 15s)
+            try:
+                await asyncio.wait_for(self._load_markets(), timeout=15.0)
+            except asyncio.TimeoutError:
+                print("⚠️ [Scanner] Timeout lors du chargement initial des marchés (continuera en arrière-plan)")
+            except Exception as e:
+                print(f"❌ [Scanner] Erreur chargement marchés: {e}")
 
-            # Initialiser le WebSocket pour données temps réel
-            await self._init_websocket()
+            # Initialiser le WebSocket pour données temps réel (avec timeout 10s)
+            try:
+                await asyncio.wait_for(self._init_websocket(), timeout=10.0)
+            except asyncio.TimeoutError:
+                print("⚠️ [Scanner] Timeout connexion WebSocket - Démarrage en mode REST")
+            except Exception as e:
+                print(f"❌ [Scanner] Erreur init WebSocket: {e}")
 
             # Démarrer la boucle de scan (fallback + refresh marchés)
             self._scan_task = asyncio.create_task(self._scan_loop())

@@ -29,6 +29,7 @@ from core import MarketScanner, OpportunityAnalyzer, Opportunity, OrderExecutor,
 from core.scanner import ScannerState, MarketData
 from core.analyzer import OpportunityAction
 from core.gabagool import GabagoolEngine, GabagoolConfig
+from core.smart_ape import SmartApeEngine, SmartApeConfig  # HFT: Smart Ape Strategy
 from core.performance import get_performance_status, orderbook_cache
 from core.speculative_engine import SpeculativeEngine  # HFT: Pre-computing orders
 from core.local_orderbook import OrderbookManager  # HFT: Local orderbook mirror
@@ -1137,6 +1138,8 @@ class HFTScalperApp(App):
 
         # HFT: Gabagool engine pour stratégie arbitrage binaire
         self._gabagool: Optional[GabagoolEngine] = None
+        # HFT: Smart Ape engine pour stratégie volatilité (Bitcoin 15min)
+        self._smart_ape: Optional[SmartApeEngine] = None
 
         # HFT: Composants optimisation latence
         self._speculative_engine: Optional[SpeculativeEngine] = None
@@ -1265,6 +1268,10 @@ class HFTScalperApp(App):
             self._gabagool = GabagoolEngine(config=GabagoolConfig())
             await self._gabagool.start()
 
+            # HFT: Initialiser Smart Ape engine
+            self._smart_ape = SmartApeEngine(config=SmartApeConfig())
+            await self._smart_ape.start()
+
             # HFT: Initialiser OrderbookManager pour miroir local
             self._orderbook_manager = OrderbookManager(max_levels=20)
 
@@ -1288,6 +1295,10 @@ class HFTScalperApp(App):
                 if self._gabagool:
                     self._gabagool.set_executor(self._paper_executor)
 
+                # Set paper executor for Smart Ape
+                if self._smart_ape:
+                    self._smart_ape.set_executor(self._paper_executor)
+
             # HFT: Connecter le callback event-driven pour analyse immédiate
             self._scanner.on_immediate_analysis = self._on_immediate_opportunity
 
@@ -1300,6 +1311,7 @@ class HFTScalperApp(App):
 
             self._log(f"✅ Scanner démarré - {self._scanner.market_count} marchés", "success")
             self._log("🦀 Gabagool Engine activé", "success")
+            self._log("🦍 Smart Ape Engine activé", "success")
             self._log("⚡ Event-driven trigger activé", "success")
 
             if self._is_paper_mode:
@@ -1445,6 +1457,45 @@ class HFTScalperApp(App):
                         log_side = "YES" if action == "buy_yes" else "NO"
                         self._log(f"🦀 Gabagool order queued: BUY {log_side} @ ${price:.3f}", "trade")
 
+            # HFT: Smart Ape trading - analyser chaque marché
+            if self._smart_ape and self._smart_ape.is_running:
+                for market_id, market_data in markets.items():
+                    if not market_data.is_valid:
+                        continue
+                    
+                    market = market_data.market
+                    # Smart Ape n'analyse que les marchés cibles (filtre interne rapide)
+                    if not self._smart_ape.is_target_market(market.question):
+                        continue
+
+                    price_yes = market_data.best_ask_yes or 0.5
+                    price_no = market_data.best_ask_no or 0.5
+
+                    action, size_usd = await self._smart_ape.analyze_opportunity(
+                        market_id=market.id,
+                        token_up_id=market.token_yes_id,
+                        token_down_id=market.token_no_id,
+                        price_up=price_yes,
+                        price_down=price_no,
+                        question=market.question
+                    )
+
+                    if action and self._executor:
+                        token_id = market.token_yes_id if action == "buy_up" else market.token_no_id
+                        price = price_yes if action == "buy_up" else price_no
+                        size = size_usd / price
+
+                        await self._executor.queue_order(
+                            token_id=token_id,
+                            side="BUY",
+                            price=price,
+                            size=size,
+                            market_id=market.id,
+                            metadata={"strategy": "smart_ape"}
+                        )
+                        side_str = "UP" if action == "buy_up" else "DOWN"
+                        self._log(f"🦍 Smart Ape order: BUY {side_str} @ ${price:.3f}", "trade")
+
             # Fallback: trading classique (si wallet connecté)
             if self._wallet_connected and self._executor:
                 tradeable = [o for o in opportunities if self._analyzer.should_trade(o)]
@@ -1535,6 +1586,8 @@ class HFTScalperApp(App):
                 # Connecter au Gabagool
                 if self._gabagool:
                     self._gabagool.set_executor(self._paper_executor)
+                if self._smart_ape:
+                    self._smart_ape.set_executor(self._paper_executor)
 
                 self._log("📝 Paper Trading ACTIVÉ", "success")
         else:
@@ -1549,6 +1602,8 @@ class HFTScalperApp(App):
                 # Déconnecter du Gabagool
                 if self._gabagool:
                     self._gabagool.set_executor(None)
+                if self._smart_ape:
+                    self._smart_ape.set_executor(None)
 
                 self._log("📝 Paper Trading DÉSACTIVÉ", "warning")
 

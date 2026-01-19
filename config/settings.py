@@ -63,7 +63,7 @@ class Settings(BaseSettings):
     # PARAMÈTRES SYSTÈME (Optimisés HFT - Ultra-rapide)
     # ═══════════════════════════════════════════════════════════════
     scan_interval_seconds: float = 0.3  # 300ms entre scans (très rapide)
-    request_timeout: int = 3  # Timeout 3s (fail fast)
+    request_timeout: int = 10  # Timeout 10s (increased to prevent startup hang)
     max_retries: int = 1  # 1 seul retry (rapidité > fiabilité pour HFT)
     
     # ═══════════════════════════════════════════════════════════════
